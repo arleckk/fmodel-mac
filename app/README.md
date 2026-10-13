@@ -142,6 +142,18 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
   revuelven los opcodes. Si unluac no puede, se muestra el volcado hex y el motivo en el log.
   Probado con 284 chunks (las pruebas de unluac compiladas con `luac` 5.5): todos bien. Los `.luac`
   de FF VII están cifrados por el juego, así que ahí no hay nada que decompilar.
+- **Buscar en el texto (⌘F):** el panel de búsqueda del editor (AvaloniaEdit), como el Ctrl+F / F3 de
+  FModel. ⌘F lo abre desde cualquier parte de la ventana (empieza con lo seleccionado), ⌘G / F3 va a la
+  siguiente coincidencia y ⇧⌘G / ⇧F3 a la anterior; tiene mayúsculas, palabra completa y regex.
+- **Varias imágenes por pestaña:** como en FModel, todas las texturas del paquete, cada capa de un
+  texture array (`nombre_0`, `nombre_1`…) y los cubemaps desdoblados como panorama. Las flechas sobre la
+  imagen (o ← → después de hacerle clic) pasan de una a otra con "n / total"; Open, Save y Add to Image
+  Merger usan la que se ve. El pixel art se escala sin suavizar y las texturas se decodifican con la
+  Texture Platform del juego.
+- **Streaming Levels:** al exportar un mundo que carga otros niveles, la Export Session pregunta cuáles
+  exportar (la ventana de FModel: árbol de actores y niveles con casillas, Select All/None, Skip y OK);
+  los que no marques quedan referenciados en el USD sin exportarse. El reloj de la sesión se pausa
+  mientras eliges. En DSR, `RealCopyWorld_Subway01` (11 niveles) exportó 2,304 archivos sin fallas.
 - **Export › Raw Data y Decompiled Blueprints:** Raw Data pasa por la Export Session con el
   `RawDataExporter` de CUE4Parse (como FModel) y escribe los archivos del paquete tal cual (`.uasset`,
   `.uexp`, `.ubulk`…). Decompiled Blueprints guarda el pseudo C++ de Decompile Blueprint como `.cpp`.
@@ -262,6 +274,10 @@ dotnet run -- --json <carpeta Paks> GAME_UE4_25 <AES|-> --refs Game/Content/.../
 dotnet run -- --json <carpeta Paks> GAME_UE4_25 <AES|-> --backup ./out
 # Decompila chunks de Lua del disco con la libunluac incluida (FMODELMAC_LUA_MODE=disassemble, FMODELMAC_LINES=n)
 dotnet run -- --unluac <archivo.luac>...
+# Lista los mapas que cargan otros niveles (lo que muestra el diálogo de Streaming Levels)
+dotnet run -- --json <paks> <EGame> <aes|-> --streaming-levels
+# Exporta un mundo con streaming: captura el diálogo, deja dos niveles y luego prueba Skip
+dotnet run -- --streaming <outdir> <paks> <EGame> <aes|-> <mapa.umap>
 # Perfiles: parte de una configuración vieja del juego A, crea el perfil de B con el Directory Selector,
 # cambia entre ambos y reinicia
 dotnet run -- --profiles <outdir> <paks A> <EGame A> <aes A|-> <paks B> <EGame B> <aes B|->

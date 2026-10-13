@@ -647,8 +647,9 @@ public sealed partial class MainViewModel : ObservableObject
         {
             var sounds = _sounds;
             var lua = Settings.DecompileLua ? LuaOptions.From(Settings) : null;
-            var result = await Task.Run(() => AssetPreview.Build(provider, file, cts.Token, sounds, lua), cts.Token);
-            var image = result.Image is null ? null : await Task.Run(() => new Bitmap(new MemoryStream(result.Image)), cts.Token);
+            var platform = Settings.CurrentVersioning.PlatformValue;
+            var result = await Task.Run(() => AssetPreview.Build(provider, file, cts.Token, sounds, lua, platform), cts.Token);
+            var image = result.Images is [var first, ..] ? await Task.Run(() => new Bitmap(new MemoryStream(first.Png)), cts.Token) : null;
             if (cts.IsCancellationRequested) return;
 
             tab.Apply(result, image);

@@ -11,6 +11,17 @@
         WindowStartupLocation="CenterScreen">
 
     <Window.Styles>
+        <!-- Image pager arrows: readable over any texture -->
+        <Style Selector="Button.imagePager">
+            <Setter Property="Background" Value="#B0202128" />
+            <Setter Property="CornerRadius" Value="14" />
+            <Setter Property="Padding" Value="6" />
+            <Setter Property="Width" Value="28" />
+            <Setter Property="Height" Value="28" />
+        </Style>
+        <Style Selector="Button.imagePager:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#E0206BD4" />
+        </Style>
         <!-- Folder tree expander arrow: FModel rotates ArrowIcon -90° (collapsed) / -45° (expanded) -->
         <Style Selector="c|Glyph.arrow">
             <Setter Property="RenderTransform" Value="rotate(-90deg)" />
@@ -432,9 +443,10 @@
                             <GridSplitter x:Name="ImageSplitter" Grid.Column="1" Width="4" ResizeDirection="Columns"
                                           Background="{StaticResource Layer3BackgroundBrush}"
                                           IsVisible="{Binding SelectedTab.HasImage, FallbackValue=False}" />
-                            <Panel Grid.Column="2" IsVisible="{Binding SelectedTab.HasImage, FallbackValue=False}">
+                            <Panel x:Name="ImagePanel" Grid.Column="2" IsVisible="{Binding SelectedTab.HasImage, FallbackValue=False}"
+                                   Focusable="True" Background="Transparent" KeyDown="OnImageKeyDown" PointerPressed="OnImagePointerPressed">
                                 <Border BorderBrush="#3b3d4a" BorderThickness="1" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                    <Image Source="{Binding SelectedTab.Image}" Stretch="Uniform"
+                                    <Image x:Name="TabImage" Source="{Binding SelectedTab.Image}" Stretch="Uniform"
                                            RenderOptions.BitmapInterpolationMode="HighQuality">
                                         <Image.ContextMenu>
                                             <ContextMenu>
@@ -451,8 +463,22 @@
                                         </Image.ContextMenu>
                                     </Image>
                                 </Border>
-                                <TextBlock VerticalAlignment="Bottom" HorizontalAlignment="Center" FontSize="10" FontWeight="SemiBold"
-                                           Margin="0,0,0,4" Text="{Binding SelectedTab.ImageName}" />
+                                <!-- FModel's image pager: previous / next with ← →, and "n / total" -->
+                                <Button Classes="toolbar imagePager" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="4,0,0,0"
+                                        ToolTip.Tip="Previous image (←)" Click="OnPreviousImageClick"
+                                        IsVisible="{Binding SelectedTab.HasMultipleImages, FallbackValue=False}">
+                                    <c:Glyph Data="{StaticResource SkipPreviousIcon}" />
+                                </Button>
+                                <Button Classes="toolbar imagePager" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,4,0"
+                                        ToolTip.Tip="Next image (→)" Click="OnNextImageClick"
+                                        IsVisible="{Binding SelectedTab.HasMultipleImages, FallbackValue=False}">
+                                    <c:Glyph Data="{StaticResource SkipNextIcon}" />
+                                </Button>
+                                <StackPanel VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="0,0,0,4">
+                                    <TextBlock HorizontalAlignment="Center" FontSize="10" FontWeight="SemiBold" Text="{Binding SelectedTab.ImageName}" />
+                                    <TextBlock HorizontalAlignment="Center" FontSize="10" Classes="dim" Text="{Binding SelectedTab.ImagePage}"
+                                               IsVisible="{Binding SelectedTab.HasMultipleImages, FallbackValue=False}" />
+                                </StackPanel>
                             </Panel>
                         </Grid>
                     </Grid>

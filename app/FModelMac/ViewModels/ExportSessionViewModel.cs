@@ -115,6 +115,41 @@ public sealed partial class ExportSessionViewModel : ObservableObject
     public string? OverrideDirectory { get; set; }
 
     public bool CanExport => !IsRunning && QueuedCount > 0;
+
+    /// <summary>
+    /// Shows FModel's Streaming Levels dialog for a world (on the UI thread) and completes when it's closed. Without
+    /// it, worlds export with CUE4Parse's default choice (only the always-loaded levels).
+    /// </summary>
+    public Func<StreamingLevelFilterViewModel, Task>? ChooseStreamingLevels { get; set; }
+
+    // Called by CUE4Parse on an exporter thread, one world at a time: wait for the user, with the clock paused
+    private void FilterStreamingLevels(StreamingLevelFilterArgs args, CancellationToken ct)
+    {
+        if (ChooseStreamingLevels is not { } choose) return;
+        var done = new TaskCompletionSource();
+        void Ask()
+        {
+            try
+            {
+                choose(new StreamingLevelFilterViewModel(args)).ContinueWith(_ => done.TrySetResult(), TaskScheduler.Default);
+            }
+            catch (Exception e)
+            {
+                done.TrySetException(e);
+            }
+        }
+        _stopwatch.Stop();
+        try
+        {
+            if (_context is null) Ask();
+            else _context.Post(_ => Ask(), null);
+            done.Task.Wait(ct);
+        }
+        finally
+        {
+            _stopwatch.Start();
+        }
+    }
     public bool CanClear => !IsRunning;
 
     public ExportSessionViewModel() => ExportLogSink.Received += OnLog;
@@ -263,7 +298,7 @@ public sealed partial class ExportSessionViewModel : ObservableObject
     private async Task<IReadOnlyList<ExportResult>> RunGroupAsync(ExportItem[] items, ExportOptions options, string directory,
         int doneBefore, int queuedAfter, CancellationToken ct)
     {
-        var session = new ExportSession();
+        var session = new ExportSession(ChooseStreamingLevels is null ? null : FilterStreamingLevels);
         foreach (var item in items)
         {
             if (item.RawFile is { } file) session.Add(new RawDataExporter(file, item.Provider!));

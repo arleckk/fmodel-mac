@@ -371,6 +371,22 @@ if (args is ["--profiles", var profOut, var paksA, var gameA, var aesA, var paks
     return;
 }
 
+// "--streaming <outdir> <paks> <EGame> <aes|-> <map>" exports a world that streams other levels through the Export
+// Session: the Streaming Levels dialog appears (screenshot), keeps the first two levels, then Skip on a second run
+if (args is ["--streaming", var strOut, var strPaks, var strGame, var strAes, var strMap])
+{
+    strOut = Path.GetFullPath(strOut);
+    Directory.CreateDirectory(strOut);
+    Environment.SetEnvironmentVariable("FMODELMAC_DATA_DIR", Path.Combine(strOut, "data"));
+    new AppSettings
+    {
+        ArchiveDir = strPaks, Game = strGame, AesKey = strAes == "-" ? null : strAes, OutputDir = Path.Combine(strOut, "Output"),
+        UsmapPath = Environment.GetEnvironmentVariable("FMODELMAC_USMAP")
+    }.Save();
+    RunOnUiThread(SnapshotApp.BuildAvaloniaApp(), () => StreamingTestAsync(strOut, strMap), TimeSpan.FromMinutes(10));
+    return;
+}
+
 // "--unluac <chunk>..." decompiles compiled Lua files from disk with the bundled libunluac (FMODELMAC_LUA_MODE=
 // disassemble for the other mode); prints each result's status and its first FMODELMAC_LINES lines (default 15)
 if (args is ["--unluac", .. var chunkFiles])
@@ -415,6 +431,29 @@ if (args is ["--json", var jsonPaks, var jsonGame, var jsonAes, ..])
     {
         foreach (var map in jsonProvider.Files.Values.Where(f => f.Extension == "umap").OrderBy(f => f.Path))
             Console.WriteLine($"{map.Path} {map.Size / 1024} KB");
+        return;
+    }
+
+    // "--json ... --streaming-levels" lists the maps that stream other levels (what the Streaming Levels dialog shows)
+    if (args[4..] is ["--streaming-levels"])
+    {
+        static int Count(CUE4Parse_Conversion.Dto.ActorDto actor) => (actor.StreamingLevels?.Count ?? 0) + CountComponent(actor.RootComponent);
+        static int CountComponent(CUE4Parse_Conversion.Dto.SceneComponentDto? c) => c is null ? 0 : c.AttachedActors.Sum(Count) + c.Children.Sum(CountComponent);
+        var found = new List<(string Path, int World, int Actors)>();
+        foreach (var map in jsonProvider.Files.Values.Where(f => f.Extension == "umap").DistinctBy(f => f.Path))
+        {
+            try
+            {
+                if (jsonProvider.LoadPackage(map).GetExports().OfType<CUE4Parse.UE4.Objects.Engine.UWorld>().FirstOrDefault() is not { } world) continue;
+                using var dto = new CUE4Parse_Conversion.Dto.WorldDto(world);
+                var fromActors = dto.Actors.Sum(Count);
+                if (dto.StreamingLevels.Count + fromActors > 0) found.Add((map.Path, dto.StreamingLevels.Count, fromActors));
+            }
+            catch (Exception e) { Console.WriteLine($"  {map.Path}: {e.GetType().Name} {e.Message}"); }
+        }
+        foreach (var (path, world, actors) in found.OrderByDescending(f => f.World + f.Actors).Take(15))
+            Console.WriteLine($"{path}: {world} world level(s), {actors} from actors");
+        Console.WriteLine($"{found.Count} map(s) stream other levels");
         return;
     }
 
@@ -1030,8 +1069,68 @@ async Task RunAsync()
     session.Close();
 
     await MinorSettingsTestAsync(window, vm);
+    await ImagesAndSearchTestAsync(window, vm);
 
     window.Close();
+}
+
+// Every image of a package (texture array layers, cubemap panorama) with the pager, and ⌘F / ⌘G in the text
+async Task ImagesAndSearchTestAsync(MainWindow window, MainViewModel vm)
+{
+    void Press(Key key, RawInputModifiers modifiers = RawInputModifiers.None)
+    {
+        window.KeyPress(key, modifiers);
+        window.KeyRelease(key, modifiers);
+        Dispatcher.UIThread.RunJobs();
+    }
+    (int W, int H) Size(byte[]? png) => png is null ? (0, 0) : SkiaSharp.SKBitmap.DecodeBounds(png) is var info ? (info.Width, info.Height) : (0, 0);
+
+    await vm.ExtractAsync(vm.AllFiles().First(f => f.Name == "T_Array.uasset"));
+    var tab = vm.SelectedTab!;
+    var names = string.Join(", ", tab.Images.Select(i => i.Name));
+    var first = tab.ImagePage;
+    tab.StepImage(1);
+    var afterNext = $"{tab.ImagePage} {tab.ImageName}";
+    window.FindControl<Panel>("ImagePanel")!.Focus();
+    Press(Key.Left);
+    Press(Key.Left);
+    var wrapped = $"{tab.ImagePage} {tab.ImageName}";
+    Console.WriteLine($"Images: T_Array -> {tab.Images.Count} ({names}) | {first} | next: {afterNext} | ← ← wraps: {wrapped} | " +
+                      $"pager shown {tab.HasMultipleImages}");
+    await Task.Delay(200);
+    Save(window, "23-images.png");
+
+    foreach (var name in new[] { "T_Cube.uasset", "T_CubeArray.uasset", "T_Volume.uasset", "T_Mips.uasset" })
+    {
+        if (vm.AllFiles().FirstOrDefault(f => f.Name == name) is not { } file) continue;
+        await vm.ExtractAsync(file);
+        var (w, h) = Size(vm.SelectedTab!.ImagePng);
+        Console.WriteLine($"  {name}: {vm.SelectedTab.Images.Count} image(s), first {w}×{h}{(vm.Logs[^1].Kind == LogKind.Warning ? $" | {vm.Logs[^1].Message}" : "")}");
+    }
+
+    // ⌘F from the packages list opens the editor's search; typing, ⌘G and ⇧⌘G move through the matches
+    await vm.ExtractAsync(vm.AllFiles().First(f => f.Name == "SM_Fixture.uasset"));
+    var editor = window.FindControl<AvaloniaEdit.TextEditor>("Editor")!;
+    window.FindControl<ListBox>("PackagesList")!.Focus();
+    Press(Key.F, RawInputModifiers.Meta);
+    var panel = editor.SearchPanel;
+    var opened = !panel.IsClosed;
+    panel.SearchPattern = "StaticMesh";
+    Dispatcher.UIThread.RunJobs();
+    Press(Key.G, RawInputModifiers.Meta);
+    var firstHit = editor.CaretOffset;
+    Press(Key.G, RawInputModifiers.Meta);
+    var secondHit = editor.CaretOffset;
+    Press(Key.G, RawInputModifiers.Meta | RawInputModifiers.Shift);
+    var back = editor.CaretOffset;
+    Press(Key.F3);
+    var f3 = editor.CaretOffset;
+    var line = editor.Document.GetLineByOffset(Math.Max(0, secondHit - 1));
+    Console.WriteLine($"Text search: ⌘F opened {opened} | 'StaticMesh' ⌘G at {firstHit}, again {secondHit}, ⇧⌘G back {back}, F3 {f3} | " +
+                      $"selected '{editor.SelectedText}' on line {line.LineNumber}");
+    await Task.Delay(200);
+    Save(window, "24-text-search.png");
+    panel.Close();
 }
 
 // Settings › Preview/Hotkeys/Themes, Keep Directory Structure, Export › Raw Data and Decompiled, skeletons as meshes
@@ -1332,6 +1431,56 @@ async Task ProfilesTestAsync(string outputDir, string paksB, string gameB, strin
                       $"language {again.Profiles.First(p => p.Name == profileA.Name).AssetLanguage}");
     var title = new MainViewModel();
     Console.WriteLine($"  new window title before mounting: '{title.Title}'");
+}
+
+async Task StreamingTestAsync(string outputDir, string mapPath)
+{
+    var vm = new MainViewModel();
+    var window = new MainWindow { DataContext = vm, Width = 1600, Height = 950 };
+    window.Show();
+    await WaitFor(() => vm.Archives.Count > 0 && vm.IsReady, "the game");
+    Console.WriteLine($"Init: {vm.StatusExtra}");
+    var map = vm.Archive!.Provider[mapPath];
+    var asked = 0;
+    var skip = false;
+    // What MainWindow does, plus a screenshot and a choice
+    vm.ExportSession.ChooseStreamingLevels = async filter =>
+    {
+        asked++;
+        var dialog = new StreamingLevelFilterWindow(filter);
+        dialog.Show();
+        await Task.Delay(300);
+        if (asked == 1) SaveTo(dialog, outputDir, "streaming-levels.png");
+        var levels = filter.Levels.ToList();
+        Console.WriteLine($"  dialog: {filter.TotalCount} level(s) of {filter.WorldName}, checked by default: " +
+                          $"{string.Join(", ", levels.Where(l => l.IsChecked == true).Select(l => l.Name))}");
+        if (skip) filter.SkipAll();
+        else
+        {
+            filter.SkipAll();
+            foreach (var level in levels.Take(2)) level.IsChecked = true;
+            var group = filter.Children.OfType<LevelGroupNode>().First();
+            Console.WriteLine($"  group '{group.Name}' after checking 2: {(group.IsChecked is null ? "mixed" : group.IsChecked.ToString())}");
+        }
+        dialog.Close();
+    };
+
+    async Task<string[]> Export()
+    {
+        await vm.ExportWorldCommand.ExecuteAsync(new List<AssetItem> { new(map) });
+        await vm.RunExportSessionAsync();
+        return vm.ExportSession.Groups.SelectMany(g => g.Items).Where(i => i.FirstFile?.EndsWith(".usda") == true)
+            .Select(i => Path.GetFileNameWithoutExtension(i.FirstFile!)).ToArray();
+    }
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    var worlds = await Export();
+    Console.WriteLine($"Two levels: asked {asked} time(s), {worlds.Length} world file(s): {string.Join(", ", worlds)} | " +
+                      $"{vm.ExportSession.SucceededCount} ok, {vm.ExportSession.FailedCount} failed, {watch.Elapsed.TotalSeconds:F1}s (clock {vm.ExportSession.ElapsedText})");
+    skip = true;
+    asked = 0;
+    worlds = await Export();
+    Console.WriteLine($"Skip: asked {asked} time(s), {worlds.Length} world file(s): {string.Join(", ", worlds)}");
+    window.Close();
 }
 
 async Task WaitFor(Func<bool> condition, string what)

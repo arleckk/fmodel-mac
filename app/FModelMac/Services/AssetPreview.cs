@@ -14,13 +14,18 @@ using Newtonsoft.Json;
 
 namespace FModelMac.Services;
 
+/// <summary>An image of the preview: a texture (or one layer of a texture array), PNG-encoded.</summary>
+/// <param name="NearestNeighbor">Pixel art (FModel's RenderNearestNeighbor): scale it up without smoothing.</param>
+public sealed record PreviewImage(string Name, byte[] Png, bool NearestNeighbor = false);
+
 /// <param name="Highlight">Name of the .xshd definition to use (Json, Ini, Xml, …) or null for plain text.</param>
+/// <param name="Images">Every texture of the package (FModel's tab images), or the image file itself.</param>
 /// <param name="Mesh">First static/skeletal mesh of the package, for the 3D viewer.</param>
 /// <param name="Animation">First animation (sequence, montage, composite, blend space) of the package, to play in the 3D viewer.</param>
 /// <param name="World">The map of a .umap, for the 3D viewer.</param>
 /// <param name="Sounds">Sounds of the package or file, for the audio player.</param>
 /// <param name="Skeleton">The skeleton of the package, shown as an empty mesh with "Handle Skeletons as Empty Meshes".</param>
-public sealed record PreviewResult(string Text, string? Highlight, byte[]? Image, string? ImageName,
+public sealed record PreviewResult(string Text, string? Highlight, IReadOnlyList<PreviewImage>? Images,
     UObject? Mesh = null, UAnimationAsset? Animation = null, UWorld? World = null,
     IReadOnlyList<ExtractedSound>? Sounds = null, IReadOnlyList<string>? SoundWarnings = null, USkeleton? Skeleton = null,
     string? Warning = null);
@@ -35,8 +40,9 @@ public static class AssetPreview
     };
 
     /// <param name="lua">Decompile compiled Lua chunks with these options (null: show them as they are).</param>
+    /// <param name="platform">The game's texture platform (Settings › General), for console cooks.</param>
     public static PreviewResult Build(IFileProvider provider, GameFile file, CancellationToken ct, SoundExtractor? audio = null,
-        LuaOptions? lua = null)
+        LuaOptions? lua = null, ETexturePlatform platform = ETexturePlatform.DesktopMobile)
     {
         // The extractor keeps per-call warnings: one extraction at a time
         (List<ExtractedSound> Sounds, string[] Warnings) Sounds(Func<SoundExtractor, List<ExtractedSound>> extract)
@@ -51,13 +57,13 @@ public static class AssetPreview
             var json = JsonConvert.SerializeObject(exports, Formatting.Indented);
             ct.ThrowIfCancellationRequested();
 
-            var texture = exports.OfType<UTexture>().FirstOrDefault();
-            var png = texture is null ? null : EncodeTexture(texture);
+            var images = EncodeTextures(exports.OfType<UTexture>(), platform, ct, out var imageWarnings);
             var (sounds, warnings) = Sounds(a => a.FromExports(file, exports));
-            return new PreviewResult(Truncate(json), "Json", png, png is null ? null : texture!.Name,
+            return new PreviewResult(Truncate(json), "Json", images,
                 exports.FirstOrDefault(ViewerModel.CanView),
                 exports.OfType<UAnimationAsset>().FirstOrDefault(a => a is UAnimSequence or UAnimMontage or UAnimComposite or UBlendSpaceBase),
-                exports.OfType<UWorld>().FirstOrDefault(), sounds, warnings, exports.OfType<USkeleton>().FirstOrDefault());
+                exports.OfType<UWorld>().FirstOrDefault(), sounds, warnings, exports.OfType<USkeleton>().FirstOrDefault(),
+                imageWarnings);
         }
 
         if (audio is not null && SoundExtractor.AudioExtensions.Contains(file.Extension))
@@ -65,30 +71,30 @@ public static class AssetPreview
             string? bankJson = null;
             var (sounds, warnings) = Sounds(a => a.FromFile(file, out bankJson));
             var text = bankJson ?? $"{file.Name}: {file.Extension.ToUpperInvariant()} audio, {FormatSize(file.Size)}";
-            return new PreviewResult(Truncate(text), bankJson is null ? null : "Json", null, null, Sounds: sounds, SoundWarnings: warnings);
+            return new PreviewResult(Truncate(text), bankJson is null ? null : "Json", null, Sounds: sounds, SoundWarnings: warnings);
         }
 
         var bytes = file.Read();
         ct.ThrowIfCancellationRequested();
 
         if (ImageExtensions.Contains(file.Extension))
-            return new PreviewResult("", null, bytes, file.Name);
+            return new PreviewResult("", null, [new PreviewImage(file.NameWithoutExtension, bytes)]);
 
         // FModel's "Decompile Lua": compiled chunks through unluac; source .lua files are shown as they are
         if (LuaDecompiler.IsChunk(bytes))
         {
-            if (lua is null) return new PreviewResult(HexDump(bytes, 64 * 1024), null, null, null, Warning: "Compiled Lua: turn on Settings › Lua › Decompile Lua to read it");
+            if (lua is null) return new PreviewResult(HexDump(bytes, 64 * 1024), null, null, Warning: "Compiled Lua: turn on Settings › Lua › Decompile Lua to read it");
             var result = LuaDecompiler.Decompile(bytes, lua);
             if (result.Text is { } code)
-                return new PreviewResult(Truncate(code), lua.Disassemble ? null : "Lua", null, null,
+                return new PreviewResult(Truncate(code), lua.Disassemble ? null : "Lua", null,
                     Warning: result.Partial ? $"{file.Name}: partially decompiled ({result.Error})" : null);
-            return new PreviewResult(HexDump(bytes, 64 * 1024), null, null, null, Warning: $"{file.Name}: {result.Error}");
+            return new PreviewResult(HexDump(bytes, 64 * 1024), null, null, Warning: $"{file.Name}: {result.Error}");
         }
 
         var highlight = HighlightFor(file.Extension);
         return highlight is not null || LooksLikeText(bytes) // e.g. .txt/.csv: text without highlighting
-            ? new PreviewResult(Truncate(Encoding.UTF8.GetString(bytes)), highlight, null, null)
-            : new PreviewResult(HexDump(bytes, 64 * 1024), null, null, null);
+            ? new PreviewResult(Truncate(Encoding.UTF8.GetString(bytes)), highlight, null)
+            : new PreviewResult(HexDump(bytes, 64 * 1024), null, null);
     }
 
     public static UObject[] LoadExports(IFileProvider provider, GameFile file, CancellationToken ct = default)
@@ -98,8 +104,37 @@ public static class AssetPreview
         return exports;
     }
 
-    public static byte[]? EncodeTexture(UTexture texture) =>
-        texture.Decode() is { } decoded ? decoded.Encode(ETextureFormat.Png, false, out _) : null;
+    /// <summary>
+    /// FModel's AddImage for each texture: every layer of a texture array (name_0, name_1…), cubemaps unwrapped as a
+    /// panorama, the rest as they are. Textures that can't be decoded are skipped and reported.
+    /// </summary>
+    public static List<PreviewImage> EncodeTextures(IEnumerable<UTexture> textures, ETexturePlatform platform, CancellationToken ct,
+        out string? warning)
+    {
+        var images = new List<PreviewImage>();
+        var failed = new List<string>();
+        foreach (var texture in textures)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var decoded = texture is UTexture2DArray array
+                    ? array.DecodeTextureArray(platform) ?? []
+                    : texture.Decode(platform) is { } single ? [texture is UTextureCube ? single.ToPanorama() : single] : [];
+                if (decoded.Length == 0) failed.Add(texture.Name);
+                for (var i = 0; i < decoded.Length; i++)
+                    images.Add(new PreviewImage(decoded.Length > 1 || texture is UTexture2DArray ? $"{texture.Name}_{i}" : texture.Name,
+                        decoded[i].Encode(ETextureFormat.Png, false, out _), texture.RenderNearestNeighbor));
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                Serilog.Log.Warning(e, "Could not decode {Texture}", texture.GetPathName());
+                failed.Add(texture.Name);
+            }
+        }
+        warning = failed.Count == 0 ? null : $"Could not decode {string.Join(", ", failed)}";
+        return images;
+    }
 
     public static string FormatSize(long bytes) => bytes switch
     {

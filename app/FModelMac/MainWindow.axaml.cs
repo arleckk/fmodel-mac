@@ -62,6 +62,8 @@ public partial class MainWindow : Window
         AppResources.SetJsonTheme(_vm.Settings.JsonHighlightTheme);
         ShowHotkeysInMenus();
         _vm.PickBackupFile = PickBackupFileAsync;
+        _vm.ExportSession.ChooseStreamingLevels = filter =>
+            new StreamingLevelFilterWindow(filter).ShowDialog(_exportSession is { IsVisible: true } session ? session : this);
         _vm.MergerImageAdded += OnMergerImageAdded;
         _vm.Favorites.CollectionChanged += OnFavoritesChanged;
         BuildFavoritesMenu();
@@ -114,12 +116,18 @@ public partial class MainWindow : Window
         _observedTab = tab;
         if (tab is not null) tab.PropertyChanged += OnTabPropertyChanged;
         UpdateImageColumn();
+        UpdateImageInterpolation();
     }
 
     private void OnTabPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(AssetTab.HasImage)) UpdateImageColumn();
+        if (e.PropertyName == nameof(AssetTab.ImageInterpolation)) UpdateImageInterpolation();
     }
+
+    // Pixel art without smoothing (RenderOptions can't be bound)
+    private void UpdateImageInterpolation() => Avalonia.Media.RenderOptions.SetBitmapInterpolationMode(TabImage,
+        _observedTab?.ImageInterpolation ?? Avalonia.Media.Imaging.BitmapInterpolationMode.HighQuality);
 
     private void UpdateImageColumn()
     {
@@ -163,7 +171,7 @@ public partial class MainWindow : Window
             var current = profile == _vm.Settings.ActiveProfile;
             var item = new MenuItem
             {
-                Header = profile.Name,
+                Header = profile.Name.Replace("_", "__"), // '_' marks an access key
                 ToggleType = MenuItemToggleType.Radio,
                 IsChecked = current,
                 GroupName = "profiles"
@@ -456,12 +464,62 @@ public partial class MainWindow : Window
         else Vm.Folders.Toggle(folder);
     }
 
+    // ---------- Image pager ----------
+
+    private void OnPreviousImageClick(object? sender, RoutedEventArgs e) => Vm.SelectedTab?.StepImage(-1);
+
+    private void OnNextImageClick(object? sender, RoutedEventArgs e) => Vm.SelectedTab?.StepImage(1);
+
+    // A click on the image gives it the keyboard, so ← → page through the images (FModel does it window-wide, but
+    // here the folder tree and the text editor already use the arrows)
+    private void OnImagePointerPressed(object? sender, PointerPressedEventArgs e) => ImagePanel.Focus();
+
+    private void OnImageKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.KeyModifiers != KeyModifiers.None || e.Key is not (Key.Left or Key.Right)) return;
+        Vm.SelectedTab?.StepImage(e.Key == Key.Left ? -1 : 1);
+        e.Handled = true;
+    }
+
+    // ---------- Text search (⌘F, like FModel's Ctrl+F / F3) ----------
+
+    // The editor's own search panel (AvaloniaEdit): ⌘F opens it from anywhere in the window, ⌘G / F3 find the next
+    // match and ⇧⌘G / ⇧F3 the previous one
+    private bool HandleTextSearch(KeyEventArgs e)
+    {
+        var meta = e.KeyModifiers.HasFlag(KeyModifiers.Meta);
+        var shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+        var find = e.Key == Key.F && meta && !shift;
+        var next = e.Key == Key.G && meta || e.Key == Key.F3 && !meta;
+        if (!find && !next) return false;
+        if (Vm.SelectedTab?.Document is not { TextLength: > 0 }) return false;
+
+        var panel = Editor.SearchPanel;
+        if (find || panel.IsClosed)
+        {
+            // Start from what is selected, like most editors
+            if (Editor.SelectionLength is > 0 and < 200 && !Editor.SelectedText.Contains('\n')) panel.SearchPattern = Editor.SelectedText;
+            panel.Open();
+            panel.Reactivate();
+            if (find) return true;
+        }
+        if (shift) panel.FindPrevious();
+        else panel.FindNext();
+        return true;
+    }
+
     // ---------- Hotkeys (Settings › Hotkeys) ----------
 
     // FModel's OnWindowKeyDown: tab switching and exports. Not while typing in a text field.
     private async void OnHotkeyDown(object? sender, KeyEventArgs e)
     {
-        if (_vm is null || e.Source is TextBox { IsReadOnly: false } || e.Handled) return;
+        if (_vm is null || e.Handled) return;
+        if (HandleTextSearch(e))
+        {
+            e.Handled = true;
+            return;
+        }
+        if (e.Source is TextBox { IsReadOnly: false }) return;
         var hotkeys = _vm.Settings.Hotkeys;
 
         if (hotkeys.AssetAddTab.IsTriggered(e)) _vm.AddTabCommand.Execute(null);
