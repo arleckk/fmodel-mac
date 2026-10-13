@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.OpenGL;
 using Avalonia.OpenGL.Controls;
+using Avalonia.Rendering;
 using Avalonia.Threading;
 using SkiaSharp;
 
@@ -11,11 +12,10 @@ namespace FModelMac.Rendering;
 
 /// <summary>
 /// OpenGL 3.2 core viewport for a <see cref="ViewerScene"/>: lit, textured meshes (instanced, so a map's
-/// thousands of placements cost one draw per mesh) over a ground grid, with an orbit camera (drag to orbit,
-/// right/middle/Shift-drag to pan, scroll or pinch to zoom, F to frame, WASD/QE to move). Only redraws
-/// when something changes.
+/// thousands of placements cost one draw per mesh) over a ground grid, with Snooper's orbit and fly cameras
+/// (see Input). Only redraws when something changes.
 /// </summary>
-public sealed class ModelViewport : OpenGlControlBase
+public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
 {
     public static readonly StyledProperty<bool> ShowGridProperty =
         AvaloniaProperty.Register<ModelViewport, bool>(nameof(ShowGrid), true);
@@ -28,6 +28,8 @@ public sealed class ModelViewport : OpenGlControlBase
         AvaloniaProperty.Register<ModelViewport, bool>(nameof(Wireframe));
     public static readonly StyledProperty<bool> ShowBonesProperty =
         AvaloniaProperty.Register<ModelViewport, bool>(nameof(ShowBones));
+    public static readonly StyledProperty<CameraMode> CameraModeProperty =
+        AvaloniaProperty.Register<ModelViewport, CameraMode>(nameof(CameraMode));
     public static readonly StyledProperty<float> AnimationPhaseProperty =
         AvaloniaProperty.Register<ModelViewport, float>(nameof(AnimationPhase));
     public static readonly StyledProperty<SceneItem?> SelectedProperty =
@@ -38,6 +40,8 @@ public sealed class ModelViewport : OpenGlControlBase
     public bool ShowNormalMaps { get => GetValue(ShowNormalMapsProperty); set => SetValue(ShowNormalMapsProperty, value); }
     public bool Wireframe { get => GetValue(WireframeProperty); set => SetValue(WireframeProperty, value); }
     public bool ShowBones { get => GetValue(ShowBonesProperty); set => SetValue(ShowBonesProperty, value); }
+    /// <summary>Orbit around a target, or fly like in a game (FModel's Arcball / Fly Cam).</summary>
+    public CameraMode CameraMode { get => GetValue(CameraModeProperty); set => SetValue(CameraModeProperty, value); }
     /// <summary>Position in the animation cycle, 0 to 1, for every object with a <see cref="SceneObject.Pose"/>.</summary>
     public float AnimationPhase { get => GetValue(AnimationPhaseProperty); set => SetValue(AnimationPhaseProperty, value); }
     /// <summary>Outlined in the scene; its skeleton is the one drawn with <see cref="ShowBones"/>.</summary>
@@ -68,6 +72,7 @@ public sealed class ModelViewport : OpenGlControlBase
         out vec3 vNormal;
         out vec2 vUv;
         out vec4 vTangent;
+        out vec3 vLocal;
 
         mat4 bone(float index)
         {
@@ -79,6 +84,7 @@ public sealed class ModelViewport : OpenGlControlBase
         void main()
         {
             vec4 position = vec4(aPosition, 1.0);
+            vLocal = aPosition;
             vec3 normal = aNormal;
             vec3 tangent = aTangent.xyz;
             float total = aWeights.x + aWeights.y + aWeights.z + aWeights.w;
@@ -110,6 +116,7 @@ public sealed class ModelViewport : OpenGlControlBase
         in vec3 vNormal;
         in vec2 vUv;
         in vec4 vTangent;
+        in vec3 vLocal;
         uniform sampler2D uTexture;
         uniform int uHasTexture;
         uniform vec3 uColor;
@@ -121,6 +128,15 @@ public sealed class ModelViewport : OpenGlControlBase
         uniform vec3 uCamera;
         uniform vec3 uKeyLight;    // toward the light
         uniform int uFlat;
+        // Landscapes: four paint layers' weights (RGBA, at vUv) and their diffuse textures, each repeating every
+        // uLayerTiling quads of the landscape's own space (0: no texture, that weight shows uTexture's blend instead)
+        uniform int uLandscape;
+        uniform sampler2D uWeights;
+        uniform sampler2D uLayer0;
+        uniform sampler2D uLayer1;
+        uniform sampler2D uLayer2;
+        uniform sampler2D uLayer3;
+        uniform vec4 uLayerTiling;
         out vec4 fragColor;
 
         const float PI = 3.14159265;
@@ -158,6 +174,17 @@ public sealed class ModelViewport : OpenGlControlBase
             if (uFlat == 1) { fragColor = vec4(uColor, 1.0); return; }
 
             vec3 base = uHasTexture == 1 ? texture(uTexture, vUv).rgb : uColor;
+            if (uLandscape == 1)
+            {
+                vec4 w = texture(uWeights, vUv) * step(vec4(1e-4), uLayerTiling);
+                vec2 p = vLocal.xz;
+                vec3 layers = vec3(0.0);
+                if (w.x > 0.0) layers += w.x * texture(uLayer0, p / uLayerTiling.x).rgb;
+                if (w.y > 0.0) layers += w.y * texture(uLayer1, p / uLayerTiling.y).rgb;
+                if (w.z > 0.0) layers += w.z * texture(uLayer2, p / uLayerTiling.z).rgb;
+                if (w.w > 0.0) layers += w.w * texture(uLayer3, p / uLayerTiling.w).rgb;
+                base = layers + clamp(1.0 - dot(w, vec4(1.0)), 0.0, 1.0) * base;
+            }
             vec3 albedo = pow(base, vec3(2.2));
             vec3 v = normalize(uCamera - vWorld);
             vec3 n = dot(vNormal, vNormal) > 1e-6 ? normalize(vNormal) : v;
@@ -269,7 +296,7 @@ public sealed class ModelViewport : OpenGlControlBase
     {
         AddHandler(Gestures.PointerTouchPadGestureMagnifyEvent, (_, e) =>
         {
-            Zoom(1 / (1 + (float) e.Delta.X));
+            OnMagnify((float) e.Delta.X);
             e.Handled = true;
         });
         Scene.Items.CollectionChanged += (_, _) => RequestNextFrameRendering();
@@ -290,8 +317,14 @@ public sealed class ModelViewport : OpenGlControlBase
     public void FrameModel() =>
         FrameBounds(Selected is { } item && Scene.Items.Contains(item) ? (item.Min, item.Max) : Scene.Bounds());
 
-    /// <summary>Centers the camera on everything visible.</summary>
-    public void FrameAll() => FrameBounds(Scene.Bounds());
+    /// <summary>Centers the camera on everything visible, and sets Fly's speed to the scene's size.</summary>
+    public void FrameAll()
+    {
+        if (Scene.Bounds() is not var (min, max)) return;
+        FrameBounds((min, max));
+        _flySpeed = Math.Clamp((max - min).Length() / 4, 100, 3000); // 1–30 m/s
+        NavigationChanged?.Invoke(this, EventArgs.Empty);
+    }
 
     /// <summary>Centers the camera on a box of the scene, from above at an angle.</summary>
     public void FrameBox(Vector3 min, Vector3 max, float pitch = 0.3f)
@@ -304,13 +337,13 @@ public sealed class ModelViewport : OpenGlControlBase
     {
         if (bounds is not var (min, max)) return;
         _target = (min + max) / 2;
-        _distance = Math.Max((max - min).Length() / 2, 1) / MathF.Sin(FieldOfView / 2) * 0.8f; // the bounding sphere is loose
+        _distance = Math.Max((max - min).Length() / 2, 1) / MathF.Sin(_fov / 2) * 0.8f; // the bounding sphere is loose
         _yaw = MathF.PI / 4;
         _pitch = 0.3f;
         RequestNextFrameRendering();
     }
 
-    private const float FieldOfView = 45 * MathF.PI / 180;
+    private float _fov = 45 * MathF.PI / 180;
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
@@ -319,6 +352,11 @@ public sealed class ModelViewport : OpenGlControlBase
             change.Property == WireframeProperty ||
             change.Property == ShowBonesProperty || change.Property == AnimationPhaseProperty || change.Property == SelectedProperty)
             RequestNextFrameRendering();
+        if (change.Property == CameraModeProperty)
+        {
+            RequestNextFrameRendering();
+            NavigationChanged?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     // ---------- GL lifetime ----------
@@ -391,9 +429,11 @@ public sealed class ModelViewport : OpenGlControlBase
 
         var eye = _target + _distance * Forward;
         var view = Matrix4x4.CreateLookAt(eye, _target, Vector3.UnitY);
-        var near = Math.Max(_distance * 0.01f, 1e-2f);
         var sceneRadius = Scene.Bounds() is var (min, max) ? (max - min).Length() / 2 : 100;
-        var viewProjection = view * Perspective(FieldOfView, (float) width / height, near, _distance * 100 + sceneRadius * 4);
+        // Orbit: depth range around the target. Fly: the eye can be anywhere, right next to a wall
+        var far = CameraMode == CameraMode.Fly ? sceneRadius * 4 + _distance * 2 : _distance * 100 + sceneRadius * 4;
+        var near = CameraMode == CameraMode.Fly ? Math.Max(far * 1e-5f, 0.5f) : Math.Max(_distance * 0.01f, 1e-2f);
+        var viewProjection = view * Perspective(_fov, (float) width / height, near, far);
 
         DrawScene(gl, viewProjection, eye);
         if (ShowGrid && _gridVertexCount > 0) DrawGrid(gl, viewProjection);
@@ -440,7 +480,8 @@ public sealed class ModelViewport : OpenGlControlBase
         }
 
         // Textures are shared between models (maps reuse them a lot): keep exactly the ones in use
-        var needed = live.SelectMany(o => o.Model.Sections).SelectMany(s => new[] { s.Texture, s.NormalTexture, s.MaskTexture })
+        var needed = live.SelectMany(o => o.Model.Sections)
+            .SelectMany(s => new[] { s.Texture, s.NormalTexture, s.MaskTexture, s.Landscape?.Weights }.Concat(s.Landscape?.Textures ?? []))
             .OfType<ViewerTexture>().ToHashSet();
         foreach (var unused in _textures.Keys.Where(t => !needed.Contains(t)).ToList())
         {
@@ -524,6 +565,10 @@ public sealed class ModelViewport : OpenGlControlBase
         gl.Uniform(gl.UniformLocation(_meshProgram, "uBones"), 1);
         gl.Uniform(gl.UniformLocation(_meshProgram, "uNormalMap"), 2);
         gl.Uniform(gl.UniformLocation(_meshProgram, "uMaskMap"), 3);
+        gl.Uniform(gl.UniformLocation(_meshProgram, "uWeights"), 4);
+        for (var i = 0; i < 4; i++) gl.Uniform(gl.UniformLocation(_meshProgram, $"uLayer{i}"), 5 + i);
+        var landscape = gl.UniformLocation(_meshProgram, "uLandscape");
+        var layerTiling = gl.UniformLocation(_meshProgram, "uLayerTiling");
         // Key light from above, over the viewer's left shoulder, so shapes read the same from any side
         var forward = Vector3.Normalize(_target - eye);
         var right = Vector3.Normalize(Vector3.Cross(forward, Vector3.UnitY));
@@ -566,6 +611,21 @@ public sealed class ModelViewport : OpenGlControlBase
                 gl.ActiveTexture(Gl.TEXTURE0 + 3);
                 gl.BindTexture(Gl.TEXTURE_2D, maskMap != 0 ? maskMap : _whiteTexture);
                 gl.ActiveTexture(Gl.TEXTURE0);
+                var layers = ShowTextures && section.Landscape is { } l ? l : null;
+                var weights = layers is not null ? _textures.GetValueOrDefault(layers.Weights) : 0;
+                gl.ActiveTexture(Gl.TEXTURE0 + 4);
+                gl.BindTexture(Gl.TEXTURE_2D, weights != 0 ? weights : _whiteTexture);
+                var tiling = Vector4.Zero;
+                for (var i = 0; i < 4; i++)
+                {
+                    var layer = weights != 0 && layers!.Textures[i] is { } lt ? _textures.GetValueOrDefault(lt) : 0;
+                    gl.ActiveTexture(Gl.TEXTURE0 + 5 + i);
+                    gl.BindTexture(Gl.TEXTURE_2D, layer != 0 ? layer : _whiteTexture);
+                    if (layer != 0) tiling[i] = layers!.Tiling[i];
+                }
+                gl.ActiveTexture(Gl.TEXTURE0);
+                gl.Uniform(landscape, weights != 0 ? 1 : 0);
+                gl.Uniform(layerTiling, tiling.X, tiling.Y, tiling.Z, tiling.W);
                 gl.Uniform(hasNormalMap, normalMap != 0 ? 1 : 0);
                 gl.Uniform(hasMaskMap, maskMap != 0 ? 1 : 0);
                 var layout = section.MaskLayout;
@@ -581,7 +641,7 @@ public sealed class ModelViewport : OpenGlControlBase
         if (Wireframe) gl.PolygonMode(Gl.FRONT_AND_BACK, Gl.FILL);
         gl.BindVertexArray(0);
         gl.BindTexture(Gl.TEXTURE_2D, 0);
-        for (var unit = 1; unit <= 3; unit++)
+        for (var unit = 1; unit <= 8; unit++)
         {
             gl.ActiveTexture(Gl.TEXTURE0 + unit);
             gl.BindTexture(Gl.TEXTURE_2D, 0);
@@ -714,6 +774,7 @@ public sealed class ModelViewport : OpenGlControlBase
         gl.GenerateMipmap(Gl.TEXTURE_2D);
         gl.TexParameter(Gl.TEXTURE_2D, Gl.TEXTURE_MIN_FILTER, Gl.LINEAR_MIPMAP_LINEAR);
         gl.TexParameter(Gl.TEXTURE_2D, Gl.TEXTURE_MAG_FILTER, Gl.LINEAR);
+        gl.TexParameter(Gl.TEXTURE_2D, Gl.TEXTURE_MAX_ANISOTROPY, 8); // ground seen at a grazing angle stays sharp
         gl.TexParameter(Gl.TEXTURE_2D, Gl.TEXTURE_WRAP_S, Gl.REPEAT);
         gl.TexParameter(Gl.TEXTURE_2D, Gl.TEXTURE_WRAP_T, Gl.REPEAT);
         gl.BindTexture(Gl.TEXTURE_2D, 0);
@@ -825,6 +886,29 @@ public sealed class ModelViewport : OpenGlControlBase
     }
 
     // ---------- Input ----------
+    // Snooper's controls: left-drag orbits (Orbit) or looks around (Fly); WASD move and Q/E go down/up while held
+    // (Shift faster, Option slower); C/X zoom the lens; F frames. Right/middle/Shift-drag pans; the wheel or a pinch
+    // zooms (Fly: moves forward, and with a button held changes the speed, as do +/-). The window forwards its keys
+    // (HandleKeyDown/HandleKeyUp), so they work without clicking the view first.
+
+    // Without this the GL surface isn't hit-testable (nothing is drawn through the control's own render), so clicks,
+    // drags and the wheel went to whatever was behind it
+    public bool HitTest(Point point) => new Rect(Bounds.Size).Contains(point);
+
+    private readonly HashSet<Key> _held = [];
+    private KeyModifiers _modifiers;
+    private TimeSpan? _lastStep;
+    private bool _stepping;
+    private float _flySpeed = 500; // units (cm) per second
+
+    /// <summary>Raised when the camera mode, speed or lens changes (the window's hint line).</summary>
+    public event EventHandler? NavigationChanged;
+
+    /// <summary>Fly mode's speed in m/s.</summary>
+    public float FlySpeed => _flySpeed / 100;
+
+    /// <summary>The lens' vertical field of view in degrees (C/X).</summary>
+    public float FieldOfViewDegrees => _fov * 180 / MathF.PI;
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
@@ -843,6 +927,12 @@ public sealed class ModelViewport : OpenGlControlBase
         e.Pointer.Capture(null);
     }
 
+    protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
+    {
+        base.OnPointerCaptureLost(e);
+        _dragging = false;
+    }
+
     protected override void OnPointerMoved(PointerEventArgs e)
     {
         base.OnPointerMoved(e);
@@ -854,17 +944,29 @@ public sealed class ModelViewport : OpenGlControlBase
 
         var props = e.GetCurrentPoint(this).Properties;
         if (props.IsRightButtonPressed || props.IsMiddleButtonPressed || e.KeyModifiers.HasFlag(KeyModifiers.Shift))
-        {
-            // Move the target in the camera plane, so the point under the cursor follows it
-            var unitsPerPixel = 2 * _distance * MathF.Tan(FieldOfView / 2) / (float) Math.Max(Bounds.Height, 1);
-            var (right, up) = CameraAxes();
-            _target += (-(float) delta.X * right + (float) delta.Y * up) * unitsPerPixel;
-        }
+            Pan((float) delta.X, (float) delta.Y);
         else
-        {
-            _yaw -= (float) delta.X * 0.01f;
-            _pitch = Math.Clamp(_pitch + (float) delta.Y * 0.01f, -1.55f, 1.55f);
-        }
+            Rotate((float) delta.X, (float) delta.Y);
+    }
+
+    /// <summary>Moves the camera in its plane, so the point under the cursor follows it.</summary>
+    public void Pan(float dx, float dy)
+    {
+        var unitsPerPixel = 2 * _distance * MathF.Tan(_fov / 2) / (float) Math.Max(Bounds.Height, 1);
+        var (right, up) = CameraAxes();
+        _target += (-dx * right + dy * up) * unitsPerPixel;
+        RequestNextFrameRendering();
+    }
+
+    /// <summary>A mouse drag of (dx, dy) pixels: orbits around the target, or (Fly) turns the camera where it stands.</summary>
+    public void Rotate(float dx, float dy)
+    {
+        var fly = CameraMode == CameraMode.Fly;
+        var eye = _target + _distance * Forward;
+        var sensitivity = fly ? 0.005f : 0.01f;
+        _yaw -= dx * sensitivity;
+        _pitch = Math.Clamp(_pitch + dy * sensitivity, -1.55f, 1.55f);
+        if (fly) _target = eye - _distance * Forward;
         RequestNextFrameRendering();
     }
 
@@ -878,38 +980,130 @@ public sealed class ModelViewport : OpenGlControlBase
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {
         base.OnPointerWheelChanged(e);
-        Zoom(MathF.Pow(0.9f, (float) e.Delta.Y));
+        var notches = (float) e.Delta.Y;
+        if (CameraMode == CameraMode.Fly)
+        {
+            if (_dragging) AdjustSpeed(MathF.Pow(1.25f, notches));
+            else Fly(notches * _flySpeed * 0.15f);
+        }
+        else Zoom(MathF.Pow(0.9f, notches));
         e.Handled = true;
     }
 
-    // F frames; WASD moves along the view, Q/E down and up — handy to walk through a map
-    protected override void OnKeyDown(KeyEventArgs e)
+    private void OnMagnify(float delta)
     {
-        base.OnKeyDown(e);
-        var step = _distance * (e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? 0.25f : 0.08f);
+        if (CameraMode == CameraMode.Fly) Fly(delta * _flySpeed * 1.5f);
+        else Zoom(1 / (1 + delta));
+    }
+
+    // Moves eye and target together along the view
+    private void Fly(float distance)
+    {
+        _target -= Forward * distance;
+        RequestNextFrameRendering();
+    }
+
+    public void AdjustSpeed(float factor)
+    {
+        _flySpeed = Math.Clamp(_flySpeed * factor, 10, 100_000);
+        NavigationChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>A key pressed anywhere in the viewer window; true when the camera used it.</summary>
+    public bool HandleKeyDown(Key key, KeyModifiers modifiers)
+    {
+        _modifiers = modifiers;
+        if (modifiers.HasFlag(KeyModifiers.Meta) || modifiers.HasFlag(KeyModifiers.Control))
+        {
+            _held.Clear(); // ⌘ shortcuts belong to the menus, and macOS drops the key-ups of keys pressed with ⌘
+            return false;
+        }
+        switch (key)
+        {
+            case Key.W or Key.A or Key.S or Key.D or Key.Q or Key.E or Key.C or Key.X:
+                _held.Add(key);
+                StartStepping();
+                return true;
+            case Key.F:
+                FrameModel();
+                return true;
+            case Key.OemPlus or Key.Add:
+                AdjustSpeed(1.25f);
+                return true;
+            case Key.OemMinus or Key.Subtract:
+                AdjustSpeed(0.8f);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    public void HandleKeyUp(Key key, KeyModifiers modifiers)
+    {
+        _modifiers = modifiers;
+        _held.Remove(key);
+    }
+
+    /// <summary>Forgets held keys (the window lost focus: their key-ups won't arrive).</summary>
+    public void ReleaseKeys() => _held.Clear();
+
+    /// <summary>Holds <paramref name="key"/> for <paramref name="seconds"/> (test harness).</summary>
+    public async Task HoldKeyAsync(Key key, double seconds, KeyModifiers modifiers = KeyModifiers.None)
+    {
+        HandleKeyDown(key, modifiers);
+        await Task.Delay(TimeSpan.FromSeconds(seconds));
+        HandleKeyUp(key, KeyModifiers.None);
+    }
+
+    /// <summary>Eye position and look target, in viewer space (test harness).</summary>
+    public (Vector3 Eye, Vector3 Target) CameraPose => (_target + _distance * Forward, _target);
+
+    // Held keys move the camera every frame, scaled by the frame time
+    private void StartStepping()
+    {
+        if (_stepping || TopLevel.GetTopLevel(this) is not { } top) return;
+        _stepping = true;
+        _lastStep = null;
+        top.RequestAnimationFrame(Step);
+    }
+
+    private void Step(TimeSpan now)
+    {
+        var dt = _lastStep is { } last ? (float) Math.Clamp((now - last).TotalSeconds, 0, 0.1) : 1 / 60f;
+        _lastStep = now;
+        if (_held.Count == 0 || TopLevel.GetTopLevel(this) is not { } top)
+        {
+            _stepping = false;
+            return;
+        }
+        Move(dt);
+        top.RequestAnimationFrame(Step);
+    }
+
+    private void Move(float dt)
+    {
+        var boost = (_modifiers.HasFlag(KeyModifiers.Shift) ? 3f : 1f) * (_modifiers.HasFlag(KeyModifiers.Alt) ? 0.25f : 1f);
+        var fly = CameraMode == CameraMode.Fly;
+        // Orbit walks the target over the ground at a pace that follows the zoom; Fly goes where it looks
+        var step = (fly ? _flySpeed : _distance * 0.75f) * boost * dt;
         var (right, _) = CameraAxes();
-        var ahead = Vector3.Normalize(new Vector3(-Forward.X, 0, -Forward.Z));
-        Vector3? move = e.Key switch
+        var ahead = fly ? -Forward : Vector3.Normalize(new Vector3(-Forward.X, 0, -Forward.Z));
+        var move = Vector3.Zero;
+        if (_held.Contains(Key.W)) move += ahead;
+        if (_held.Contains(Key.S)) move -= ahead;
+        if (_held.Contains(Key.D)) move += right;
+        if (_held.Contains(Key.A)) move -= right;
+        if (_held.Contains(Key.E)) move += Vector3.UnitY;
+        if (_held.Contains(Key.Q)) move -= Vector3.UnitY;
+        _target += move * step;
+
+        var lens = (_held.Contains(Key.X) ? 1 : 0) - (_held.Contains(Key.C) ? 1 : 0);
+        if (lens != 0)
         {
-            Key.W => ahead * step,
-            Key.S => -ahead * step,
-            Key.A => -right * step,
-            Key.D => right * step,
-            Key.E => Vector3.UnitY * step,
-            Key.Q => -Vector3.UnitY * step,
-            _ => null
-        };
-        if (move is { } m)
-        {
-            _target += m;
-            RequestNextFrameRendering();
-            e.Handled = true;
+            _fov = Math.Clamp(_fov + lens * 40 * MathF.PI / 180 * boost * dt, 10 * MathF.PI / 180, 100 * MathF.PI / 180);
+            NavigationChanged?.Invoke(this, EventArgs.Empty);
         }
-        else if (e.Key == Key.F)
-        {
-            FrameModel();
-            e.Handled = true;
-        }
+        RequestNextFrameRendering();
     }
 
     private void Zoom(float factor)
@@ -918,4 +1112,11 @@ public sealed class ModelViewport : OpenGlControlBase
         _distance = Math.Clamp(_distance * factor, 0.5f, radius * 200);
         RequestNextFrameRendering();
     }
+}
+
+/// <summary>FModel's camera modes: Arcball (orbit around a target) and Fly Cam (move and look like in a game).</summary>
+public enum CameraMode
+{
+    Orbit,
+    Fly
 }

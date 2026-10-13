@@ -2,10 +2,12 @@ using System.ComponentModel;
 using System.Diagnostics;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using FModelMac.Rendering;
+using FModelMac.Services;
 
 namespace FModelMac.Views;
 
@@ -38,6 +40,25 @@ public partial class ModelViewerWindow : Window
         AxisXSlider.PropertyChanged += (_, e) => { if (e.Property == Slider.ValueProperty) UpdateBlendWeights(); };
         AxisYSlider.PropertyChanged += (_, e) => { if (e.Property == Slider.ValueProperty) UpdateBlendWeights(); };
         Closed += (_, _) => _clock.Stop();
+        // Camera keys work wherever the focus is in the window (not only after clicking the view)
+        AddHandler(KeyDownEvent, (_, e) =>
+        {
+            if (e.Source is TextBox) return;
+            if (Viewport.HandleKeyDown(e.Key, e.KeyModifiers)) e.Handled = true;
+        }, RoutingStrategies.Tunnel);
+        AddHandler(KeyUpEvent, (_, e) => Viewport.HandleKeyUp(e.Key, e.KeyModifiers), RoutingStrategies.Tunnel, handledEventsToo: true);
+        Deactivated += (_, _) => Viewport.ReleaseKeys();
+        Viewport.NavigationChanged += (_, _) => UpdateHint();
+        CameraModeBox.SelectionChanged += (_, _) =>
+        {
+            Viewport.CameraMode = CameraModeBox.SelectedIndex == 1 ? CameraMode.Fly : CameraMode.Orbit;
+            if (Settings is { } settings && settings.CameraMode != Viewport.CameraMode)
+            {
+                settings.CameraMode = Viewport.CameraMode;
+                settings.Save();
+            }
+        };
+        UpdateHint();
         RootMotionToggle.IsCheckedChanged += (_, _) =>
         {
             if (_pose is null) return;
@@ -45,6 +66,22 @@ public partial class ModelViewerWindow : Window
             Viewport.RequestNextFrameRendering();
         };
     }
+
+    /// <summary>The app's settings: the camera mode is remembered there.</summary>
+    public AppSettings? Settings
+    {
+        get => _settings;
+        set
+        {
+            _settings = value;
+            if (value is not null) CameraModeBox.SelectedIndex = value.CameraMode == CameraMode.Fly ? 1 : 0;
+        }
+    }
+    private AppSettings? _settings;
+
+    private void UpdateHint() => HintText.Text = Viewport.CameraMode == CameraMode.Fly
+        ? $"Fly · Drag: look · WASD: move · Q/E: down/up · Shift: faster · ⌥: slower · Scroll: forward · +/- or scroll while dragging: speed ({Viewport.FlySpeed:0.#} m/s) · Right-drag: pan · C/X: lens ({Viewport.FieldOfViewDegrees:0}°) · F: frame"
+        : $"Orbit · Drag: orbit · Right-drag or Shift-drag: pan · Scroll or pinch: zoom · WASD: move · Q/E: down/up · Shift: faster · ⌥: slower · C/X: lens ({Viewport.FieldOfViewDegrees:0}°) · F: frame";
 
     public ModelViewport ModelViewport => Viewport;
     public ViewerScene Scene => Viewport.Scene;

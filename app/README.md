@@ -101,8 +101,13 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
   `MSRAO`, `SRXO`, `_Roughness`…, o el `SpecularMasks` de Fortnite); si no se reconoce, la máscara
   no se usa. El interruptor **Normal Maps** apaga ambos. Si el material no tiene un parámetro
   difuso conocido, se toma la textura de color (sRGB) que no sea el normal map ni la máscara
-  (`BaseTexture`, `MainTex`…). Arrastrar orbita, clic derecho/Shift paneo, scroll o pellizco zoom, WASD/QE
-  mueve, F encuadra la selección. Cada malla que abres se **agrega a la escena** junto a las
+  (`BaseTexture`, `MainTex`…).
+  **Controles** (como Snooper, con su selector **Orbit / Fly**, que se recuerda): en Orbit arrastrar
+  gira alrededor del modelo y el scroll o el pellizco acercan; en Fly arrastrar mira alrededor, el
+  scroll avanza y +/- (o scroll mientras arrastras) cambian la velocidad. En ambos: WASD mueve y Q/E
+  baja/sube mientras mantienes la tecla (Shift más rápido, ⌥ más lento), clic derecho, central o
+  Shift-arrastre hace paneo, C/X acercan/alejan la lente y F encuadra la selección. Las teclas
+  funcionan sin tener que hacer clic antes en la vista. Cada malla que abres se **agrega a la escena** junto a las
   demás; el outliner (SCENE) permite ocultar, quitar o seleccionar cada una, y Clear Scene vacía.
   Doble clic en un **material** (instancia o material base) lo muestra sobre un cubo como en FModel
   (el siguiente material reemplaza al del cubo); con el botón de material de una sección encendido
@@ -115,10 +120,13 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
   instancias (ISM/HISM/foliage), niveles de streaming (con su transformación), level instances y
   materiales sobrescritos, con instancing en GPU (una llamada de dibujo por malla). Las **spline
   meshes** (carreteras, vías, cables) se doblan a lo largo de su spline, con normales incluidas. Los
-  **landscapes** se arman como un terreno continuo y se colorean por sus capas de pintura: cada capa
-  toma el color promedio de la textura difusa del material cuyo nombre coincide (Grass_LayerInfo →
-  T_Ground_Grass_D), con una paleta por nombre si no hay ninguna, y los pesos de cada vértice las
-  mezclan (el visor de FModel no muestra landscapes).
+  **landscapes** se arman como un terreno continuo y se pintan con las **texturas reales de sus capas**:
+  cada capa toma la textura difusa del material cuyo nombre coincide (Grass_LayerInfo →
+  T_Ground_Grass_D), repetida en el espacio del terreno como el `LandscapeCoords` de UE, cada cuántos
+  metros diga su escalar de tiling (`Cliff_TilingSize`, `Ground_Tiling`…; 8 m si no hay), y los pesos
+  de pintura de cada componente mezclan en el shader sus cuatro capas principales. Las capas sin
+  textura (o más allá de cuatro) usan el color promedio, con una paleta por nombre como último
+  recurso (el visor de FModel no muestra landscapes).
   Los mapas de **World Partition** (UE5) cargan todas sus celdas de runtime en paralelo, tanto del
   hash set de UE 5.3+ como de los grids espaciales de 5.0–5.2: el contenido principal queda en el
   mapa, cada data layer de runtime es un elemento aparte (visible si empieza activado en el juego)
@@ -292,7 +300,9 @@ dotnet run -- --export-options ./out <carpeta Paks> GAME_UE4_25 <AES|-> Game/Con
 dotnet run -- --export <carpeta Paks> GAME_UE4_25 <AES> ./out 3
 # Abre el visor 3D real (OpenGL, necesita la pantalla encendida) y guarda capturas: mallas,
 # animaciones/blend spaces sobre la última malla, "morph:<nombre|*>=<peso>" para los sliders y
-# "normalmaps:off|on"; revisa el marco tangente y, con FMODELMAC_MASKS=N, lista las máscaras de un mapa
+# "normalmaps:off|on", "mode:orbit|fly", "key:W[+Shift]=<seg>" (mantiene la tecla y dice cuánto se movió la
+# cámara), "drag:dx,dy" y "hittest"; revisa el marco tangente, con FMODELMAC_MASKS=N lista las máscaras de un
+# mapa y captura un acercamiento al landscape con y sin texturas
 dotnet run -- --viewer ./out <carpeta Paks> GAME_UE4_25 <AES|-> <usmap|-> Game/Content/.../Malla.uasset Game/Content/.../BS_Algo.uasset "morph:*=1"
 # Extrae y decodifica sonidos, los guarda en .wav y prueba la reproducción (en silencio)
 dotnet run -- --audio ./out <carpeta Paks> GAME_UE4_25 <AES|-> Game/Content/.../Sonido.uasset

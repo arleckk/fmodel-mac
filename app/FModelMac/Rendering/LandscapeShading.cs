@@ -27,19 +27,33 @@ public static class LandscapeShading
     private static readonly Vector3 Untextured = new(0.42f, 0.47f, 0.36f);
 
     /// <summary>
-    /// A texture with one texel per vertex of the component, the blend of its layers' colors, and the vertices' UVs
-    /// into it (texel centers, so bilinear filtering interpolates between vertices like the weightmaps do).
+    /// A texture with one texel per vertex of the component, the vertices' UVs into it (texel centers, so bilinear
+    /// filtering interpolates between vertices like the weightmaps do), and the layers drawn with their own textures:
+    /// the (up to) four heaviest layers that have a diffuse texture get their weights in <see cref="LandscapeLayers"/>,
+    /// and the texture holds the blend of the other layers' colors, for the weight left over.
     /// </summary>
-    public static (ViewerTexture Texture, Vector3 Average, FMeshUVFloat[] Uvs)? Bake(ULandscapeComponent component, MeshLodDto<MeshVertex> lod,
-        ViewerLoadContext context)
+    public static (ViewerTexture Texture, Vector3 Average, FMeshUVFloat[] Uvs, LandscapeLayers? Layers)? Bake(ULandscapeComponent component,
+        MeshLodDto<MeshVertex> lod, ViewerLoadContext context)
     {
         if (lod.VertexColors is not { Length: > 0 } layers || lod.ExtraUvs is not [{ } extents, ..]) return null;
         var material = Material(component);
         var names = layers.Select(l => l.Name).ToArray();
-        var colors = names.Select(l => LayerColor(l, names, material, context)).ToArray();
+        var resolved = names.Select(l => Layer(l, names, material, context)).ToArray();
+        var colors = resolved.Select(r => r.Color).ToArray();
+
+        // The textured layers this component uses most
+        var textured = Enumerable.Range(0, layers.Length)
+            .Where(l => resolved[l].Texture is not null)
+            .Select(l => (Layer: l, Total: layers[l].Colors.Sum(c => (long) c.R)))
+            .Where(l => l.Total > 0)
+            .OrderByDescending(l => l.Total)
+            .Take(4).Select(l => l.Layer).ToArray();
+        var slot = Enumerable.Repeat(-1, layers.Length).ToArray();
+        for (var i = 0; i < textured.Length; i++) slot[textured[i]] = i;
 
         var size = component.ComponentSizeQuads + 1;
         var rgba = new byte[size * size * 4];
+        var weights = new byte[size * size * 4];
         var uvs = new FMeshUVFloat[lod.Vertices.Length];
         var average = Vector3.Zero;
         for (var v = 0; v < lod.Vertices.Length; v++)
@@ -49,25 +63,47 @@ public static class LandscapeShading
             var y = Math.Clamp((int) MathF.Round(extents[v].V * size), 0, size - 1);
             uvs[v] = new FMeshUVFloat((x + 0.5f) / size, (y + 0.5f) / size);
 
-            var sum = Vector3.Zero;
-            float total = 0;
+            Vector3 sum = Vector3.Zero, rest = Vector3.Zero;
+            float total = 0, restTotal = 0;
             for (var l = 0; l < layers.Length; l++)
             {
                 var weight = layers[l].Colors[v].R / 255f;
                 if (weight <= 0) continue;
                 sum += colors[l] * weight;
                 total += weight;
+                if (slot[l] >= 0) continue;
+                rest += colors[l] * weight;
+                restTotal += weight;
             }
             var color = total > 0 ? sum / total : Untextured;
             average += color;
 
             var o = (y * size + x) * 4;
-            rgba[o] = (byte) Math.Clamp(color.X * 255, 0, 255);
-            rgba[o + 1] = (byte) Math.Clamp(color.Y * 255, 0, 255);
-            rgba[o + 2] = (byte) Math.Clamp(color.Z * 255, 0, 255);
+            for (var l = 0; l < layers.Length; l++)
+                if (slot[l] >= 0 && total > 0)
+                    weights[o + slot[l]] = (byte) Math.Clamp(layers[l].Colors[v].R / 255f / total * 255 + 0.5f, 0, 255);
+            var shown = restTotal > 0 ? rest / restTotal : color; // what the textured layers leave over
+            rgba[o] = (byte) Math.Clamp(shown.X * 255, 0, 255);
+            rgba[o + 1] = (byte) Math.Clamp(shown.Y * 255, 0, 255);
+            rgba[o + 2] = (byte) Math.Clamp(shown.Z * 255, 0, 255);
             rgba[o + 3] = 255;
         }
-        return (new ViewerTexture($"{component.Name} layers", size, size, rgba), average / Math.Max(lod.Vertices.Length, 1), uvs);
+
+        LandscapeLayers? textures = null;
+        if (textured.Length > 0)
+        {
+            var tiling = new float[4];
+            var decoded = new ViewerTexture?[4];
+            for (var i = 0; i < textured.Length; i++)
+            {
+                decoded[i] = ViewerModel.Decoded(resolved[textured[i]].Texture, context, context.MaxTextureSize);
+                tiling[i] = decoded[i] is null ? 0 : resolved[textured[i]].Tiling; // the shader shows the color blend instead
+            }
+            textures = new LandscapeLayers(new ViewerTexture($"{component.Name} weights", size, size, weights), decoded,
+                new Vector4(tiling[0], tiling[1], tiling[2], tiling[3]),
+                textured.Select(l => $"{string.Join("", LayerWords(names[l]))} ({resolved[l].Texture!.Name}, {resolved[l].Tiling:0.##} m)").ToArray());
+        }
+        return (new ViewerTexture($"{component.Name} layers", size, size, rgba), average / Math.Max(lod.Vertices.Length, 1), uvs, textures);
     }
 
     // The component's own instance (it carries the weightmaps), its override, or the landscape's material
@@ -79,8 +115,13 @@ public static class LandscapeShading
         return component.Outer?.Load<CUE4Parse.UE4.Assets.Exports.Actor.ALandscapeProxy>()?.LandscapeMaterial?.Load<UMaterialInterface>();
     }
 
-    private static Vector3 LayerColor(string layer, string[] allLayers, UMaterialInterface? material, ViewerLoadContext context) =>
-        context.LayerColors.GetOrAdd($"{material?.GetPathName()}|{layer}", _ => new Lazy<Vector3>(() =>
+    /// <summary>A paint layer as drawn: its diffuse texture (if one matches), color, and how many quads one repeat spans.</summary>
+    internal sealed record ResolvedLayer(UTexture? Texture, Vector3 Color, float Tiling);
+
+    private const float DefaultTiling = 8; // quads (1 m each at the usual landscape scale) per repeat
+
+    private static ResolvedLayer Layer(string layer, string[] allLayers, UMaterialInterface? material, ViewerLoadContext context) =>
+        context.LayerColors.GetOrAdd($"{material?.GetPathName()}|{layer}", _ => new Lazy<ResolvedLayer>(() =>
         {
             var words = LayerWords(layer);
             var others = allLayers.Where(l => l != layer).SelectMany(LayerWords).Except(words, StringComparer.OrdinalIgnoreCase).ToArray();
@@ -90,8 +131,33 @@ public static class LandscapeShading
                 .OrderByDescending(c => c.Score)
                 .Select(c => c.Texture)
                 .FirstOrDefault();
-            return best is not null && AverageColor(best, context) is { } color ? color : Palette(words);
+            var color = best is not null && AverageColor(best, context) is { } average ? average : Palette(words);
+            return new ResolvedLayer(best is not null && AverageColor(best, context) is not null ? best : null, color, Tiling(words, material));
         })).Value;
+
+    // The layer's tiling scalar ("Cliff_TilingSize", "Ground_Tiling", "Jungle_TileSize", "grass_UVScale"…), from the
+    // instances up the chain. Big values are the size of one repeat in quads (LandscapeCoords' mapping scale); small
+    // ones a UV multiplier, so 0.1 repeats every 10 quads
+    private static readonly Regex TilingName = new("til|uv|scale|size", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static float Tiling(string[] words, UMaterialInterface? material)
+    {
+        var best = (Score: 0f, Value: 0f);
+        for (var current = material; current is UMaterialInstance instance; current = instance.Parent?.Load<UMaterialInterface>())
+        {
+            if (instance is not UMaterialInstanceConstant constant) continue;
+            foreach (var parameter in constant.ScalarParameterValues)
+            {
+                var name = parameter.Name;
+                if (name is null || !TilingName.IsMatch(name) || parameter.ParameterValue <= 0) continue;
+                var score = Score(Words.Matches(name).Select(m => m.Value).ToArray(), words);
+                if (score > best.Score) best = (score, parameter.ParameterValue);
+            }
+        }
+        if (best.Score <= 0) return DefaultTiling;
+        var tiling = best.Value >= 1 ? best.Value : 1 / best.Value;
+        return Math.Clamp(tiling, 0.5f, 200);
+    }
 
     /// <summary>"Grass_LayerInfo" → Grass; "WetPuddle_LayerInfo_001" → Wet, Puddle.</summary>
     public static string[] LayerWords(string layer)

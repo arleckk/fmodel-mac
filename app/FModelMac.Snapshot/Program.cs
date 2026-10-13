@@ -581,12 +581,12 @@ if (args is ["--json", var jsonPaks, var jsonGame, var jsonAes, ..])
         Collect(world, 0);
         Console.WriteLine($"{components.Count} landscape component(s)");
         var landscapeContext = new FModelMac.Rendering.ViewerLoadContext(512);
-        foreach (var component in components.Take(3))
+        foreach (var component in components)
         {
             try
             {
                 var model = FModelMac.Rendering.ViewerModel.FromLandscape(component, landscapeContext);
-                Console.WriteLine($"  model {component.Name}: {model.VertexCount} verts, bounds {model.Min} – {model.Max}, " +
+                if (components.IndexOf(component) < 3) Console.WriteLine($"  model {component.Name}: {model.VertexCount} verts, bounds {model.Min} – {model.Max}, " +
                                   $"texture {model.Sections.FirstOrDefault()?.Texture?.Name}, color {model.Sections.FirstOrDefault()?.Color}");
             }
             catch (Exception e)
@@ -594,7 +594,9 @@ if (args is ["--json", var jsonPaks, var jsonGame, var jsonAes, ..])
                 Console.WriteLine($"  model {component.Name} failed: {e}");
             }
         }
-        foreach (var (key, color) in landscapeContext.LandscapeLayerColors) Console.WriteLine($"  layer {key} = {color}");
+        foreach (var group in landscapeContext.LandscapeLayerColors.GroupBy(l => (Layer: l.Key.Split('|')[1], l.Texture, l.Tiling)).OrderBy(g => g.Key.Layer))
+            Console.WriteLine($"  layer {group.Key.Layer}: texture {group.Key.Texture ?? "-"}, repeats every {group.Key.Tiling:0.##} quads, color {group.First().Color} " +
+                              $"({group.Count()} material(s), e.g. {group.First().Key.Split('|')[0].Split('.').Last()})");
         foreach (var component in components.Take(2))
         {
             var instances = component.GetOrDefault<CUE4Parse.UE4.Objects.UObject.FPackageIndex[]>("MaterialInstances", []);
@@ -609,6 +611,7 @@ if (args is ["--json", var jsonPaks, var jsonGame, var jsonAes, ..])
                 material.GetParams(p2, CUE4Parse.UE4.Assets.Exports.Material.EMaterialDepth.TopLayerOnly);
                 Console.WriteLine($"  material {material.GetPathName()} ({material.ExportType})");
                 foreach (var (name, tex) in p2.Textures.Take(40)) Console.WriteLine($"    tex {name} = {tex}");
+                foreach (var (name, value) in p2.Scalars.Take(60)) Console.WriteLine($"    scalar {name} = {value}");
                 var parent = material;
                 for (var i = 0; i < 4 && parent is CUE4Parse.UE4.Assets.Exports.Material.UMaterialInstance mi && mi.Parent?.Load<CUE4Parse.UE4.Assets.Exports.Material.UMaterialInterface>() is { } next; i++)
                 {
@@ -929,6 +932,52 @@ async Task ViewerTestAsync(string outputDir, string[] packages)
             continue;
         }
 
+        // "hittest" prints which control gets a click in the middle of the 3D view
+        if (package == "hittest")
+        {
+            var vp = viewer.ModelViewport;
+            var center = vp.TranslatePoint(new Avalonia.Point(vp.Bounds.Width / 2, vp.Bounds.Height / 2), viewer) ?? default;
+            var hit = viewer.InputHitTest(center);
+            Console.WriteLine($"hit test at {center}: {hit?.GetType().Name ?? "nothing"} (viewport {vp.Bounds.Size}, focused {vp.IsFocused})");
+            continue;
+        }
+
+        // "mode:orbit|fly" switches the camera; "key:<Key>[+Shift]=<seconds>" holds a key through the window's key
+        // routing and prints where the camera went; "drag:<dx>,<dy>" turns the camera like a left-drag
+        if (package.StartsWith("mode:"))
+        {
+            viewer.FindControl<ComboBox>("CameraModeBox")!.SelectedIndex = package.EndsWith("fly") ? 1 : 0;
+            Console.WriteLine($"camera mode {viewer.ModelViewport.CameraMode}, fly speed {viewer.ModelViewport.FlySpeed:0.##} m/s");
+            continue;
+        }
+        if (package.StartsWith("key:"))
+        {
+            var spec = package[4..].Split('=');
+            var keyName = spec[0].Split('+');
+            var key = Enum.Parse<Avalonia.Input.Key>(keyName[0]);
+            var mods = keyName.Length > 1 ? Enum.Parse<Avalonia.Input.KeyModifiers>(keyName[1]) : Avalonia.Input.KeyModifiers.None;
+            var before = viewer.ModelViewport.CameraPose;
+            viewer.RaiseEvent(new Avalonia.Input.KeyEventArgs { RoutedEvent = Avalonia.Input.InputElement.KeyDownEvent, Key = key, KeyModifiers = mods, Source = viewer });
+            await Task.Delay(TimeSpan.FromSeconds(double.Parse(spec[1], System.Globalization.CultureInfo.InvariantCulture)));
+            viewer.RaiseEvent(new Avalonia.Input.KeyEventArgs { RoutedEvent = Avalonia.Input.InputElement.KeyUpEvent, Key = key, Source = viewer });
+            await Task.Delay(100);
+            var after = viewer.ModelViewport.CameraPose;
+            Console.WriteLine($"key {package[4..]}: eye moved {after.Eye - before.Eye} ({(after.Eye - before.Eye).Length():0.#}), " +
+                              $"target moved {(after.Target - before.Target).Length():0.#}, lens {viewer.ModelViewport.FieldOfViewDegrees:0.#}°");
+            await Capture($"key-{spec[0]}");
+            continue;
+        }
+        if (package.StartsWith("drag:"))
+        {
+            var d = package[5..].Split(',').Select(v => float.Parse(v, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+            var before = viewer.ModelViewport.CameraPose;
+            viewer.ModelViewport.Rotate(d[0], d[1]);
+            var after = viewer.ModelViewport.CameraPose;
+            Console.WriteLine($"drag {d[0]},{d[1]} ({viewer.ModelViewport.CameraMode}): eye moved {(after.Eye - before.Eye).Length():0.#}, target moved {(after.Target - before.Target).Length():0.#}");
+            await Capture($"drag-{viewer.ModelViewport.CameraMode}");
+            continue;
+        }
+
         // "normalmaps:on|off" switches normal maps and masks, then captures
         if (package.StartsWith("normalmaps:"))
         {
@@ -1044,6 +1093,17 @@ async Task ViewerTestAsync(string outputDir, string[] packages)
                 Console.WriteLine($"    landscape: {terrain.Length} component(s), {(tmax - tmin) / 100} m");
                 viewer.ModelViewport.FrameBox(tmin, tmax, 0.6f);
                 await Capture($"map-{map.Name}-landscape");
+                // Close-up of the component with the most textured layers, nearest the middle
+                var center = (tmin + tmax) / 2;
+                var close = terrain.OrderByDescending(o => o.Model.Sections.FirstOrDefault()?.Landscape?.Textures.Count(t => t is not null) ?? 0)
+                    .ThenBy(o => (BoxOf([o]).Item1 + BoxOf([o]).Item2 - 2 * center).Length()).First();
+                var (cmin, cmax) = BoxOf([close]);
+                Console.WriteLine($"    close-up: {close.Model.Name}, {close.Model.Sections[0].Details}");
+                viewer.ModelViewport.FrameBox(cmin, cmax, 0.45f);
+                await Capture($"map-{map.Name}-landscape-close");
+                viewer.ModelViewport.ShowTextures = false;
+                await Capture($"map-{map.Name}-landscape-close-untextured");
+                viewer.ModelViewport.ShowTextures = true;
             }
             continue;
         }

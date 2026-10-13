@@ -36,12 +36,13 @@ public sealed class ViewerLoadContext(int maxTextureSize = 1024, ETexturePlatfor
     internal readonly ConcurrentDictionary<string, Lazy<ViewerMaterial>> Materials = new(StringComparer.OrdinalIgnoreCase);
     internal readonly ConcurrentDictionary<string, Lazy<ViewerTexture?>> Textures = new(StringComparer.OrdinalIgnoreCase);
     // Landscapes: layer colors, the diffuse textures of a landscape material, and textures' average colors
-    internal readonly ConcurrentDictionary<string, Lazy<Vector3>> LayerColors = new(StringComparer.OrdinalIgnoreCase);
+    internal readonly ConcurrentDictionary<string, Lazy<LandscapeShading.ResolvedLayer>> LayerColors = new(StringComparer.OrdinalIgnoreCase);
     internal readonly ConcurrentDictionary<string, Lazy<IReadOnlyList<LandscapeShading.Candidate>>> LandscapeTextures = new(StringComparer.OrdinalIgnoreCase);
     internal readonly ConcurrentDictionary<string, Lazy<Vector3?>> TextureColors = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The landscape layer colors resolved so far, by "material|layer" (diagnostics).</summary>
-    public IEnumerable<(string Key, Vector3 Color)> LandscapeLayerColors => LayerColors.Select(p => (p.Key, p.Value.Value));
+    public IEnumerable<(string Key, Vector3 Color, string? Texture, float Tiling)> LandscapeLayerColors =>
+        LayerColors.Select(p => (p.Key, p.Value.Value.Color, p.Value.Value.Texture?.Name, p.Value.Value.Tiling));
 }
 
 /// <summary>Decoded RGBA8 pixels, top row first, ready for glTexImage2D.</summary>
@@ -79,8 +80,11 @@ public sealed partial class ViewerSection : ObservableObject
     /// <summary>Packed roughness / metallic / occlusion mask, read through <see cref="MaskLayout"/>.</summary>
     [ObservableProperty] private ViewerTexture? _maskTexture;
     [ObservableProperty] private MaskLayout _maskLayout = MaskLayout.None;
+    /// <summary>A landscape's paint layers, textured in the shader (the section's texture is then the rest).</summary>
+    public LandscapeLayers? Landscape { get; init; }
 
-    public string Details => (Texture is { } t ? $"{t.Name} ({t.Width}×{t.Height})" : "No diffuse texture") +
+    public string Details => Landscape is { } landscape ? $"Landscape layers: {string.Join(", ", landscape.Names)}" :
+                             (Texture is { } t ? $"{t.Name} ({t.Width}×{t.Height})" : "No diffuse texture") +
                              (NormalTexture is not null ? " · normal map" : "") + (MaskTexture is not null ? $" · {MaskLayout}" : "");
 
     [ObservableProperty] private bool _isVisible = true;
@@ -98,6 +102,13 @@ public sealed partial class ViewerSection : ObservableObject
         MaskLayout = material.Layout;
     }
 }
+
+/// <summary>
+/// Up to four paint layers of a landscape component: <see cref="Weights"/> holds each layer's weight in R, G, B, A
+/// (sampled with the section's UVs), and each layer's diffuse repeats every <see cref="Tiling"/> quads of the
+/// landscape, as UE's LandscapeCoords node does.
+/// </summary>
+public sealed record LandscapeLayers(ViewerTexture Weights, ViewerTexture?[] Textures, Vector4 Tiling, string[] Names);
 
 /// <summary>What the viewer draws of a material: its name, diffuse texture (if any), color, normal map and masks.</summary>
 public sealed record ViewerMaterial(string Name, ViewerTexture? Texture, Vector3 Color, ViewerTexture? Normal = null,
@@ -216,7 +227,7 @@ public sealed class ViewerModel
         var model = Build(dto, "Landscape", context, null, ct, new Vector3(0.42f, 0.47f, 0.36f));
         try
         {
-            if (LandscapeShading.Bake(component, dto.LODs[0], context) is not var (texture, average, uvs)) return model;
+            if (LandscapeShading.Bake(component, dto.LODs[0], context) is not var (texture, average, uvs, layers)) return model;
             for (var i = 0; i < uvs.Length; i++)
             {
                 model.Vertices[i * FloatsPerVertex + 6] = uvs[i].U;
@@ -224,7 +235,8 @@ public sealed class ViewerModel
             }
             var sections = model.Sections.Select(s => new ViewerSection
             {
-                FirstIndex = s.FirstIndex, IndexCount = s.IndexCount, MaterialName = s.MaterialName, Texture = texture, Color = average
+                FirstIndex = s.FirstIndex, IndexCount = s.IndexCount, MaterialName = s.MaterialName, Texture = texture, Color = average,
+                Landscape = layers
             }).ToArray();
             return new ViewerModel
             {
@@ -538,7 +550,7 @@ public sealed class ViewerModel
     private static UTexture? Fallback(CMaterialParams2 parameters, string name) =>
         parameters.Textures.TryGetValue(name, out var value) && value.TryLoad<UTexture>(out var texture) ? texture : null;
 
-    private static ViewerTexture? Decoded(UTexture? texture, ViewerLoadContext context, int maxSize) => texture is null
+    internal static ViewerTexture? Decoded(UTexture? texture, ViewerLoadContext context, int maxSize) => texture is null
         ? null
         : context.Textures.GetOrAdd($"{texture.GetPathName()}@{maxSize}",
             _ => new Lazy<ViewerTexture?>(() => Decode(texture, maxSize, context.Platform))).Value;

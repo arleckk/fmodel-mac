@@ -13,6 +13,11 @@
                 <StackPanel Orientation="Horizontal" Spacing="12">
                     <Button Content="Frame" ToolTip.Tip="Center the camera on the selection, or on everything (F)" Click="OnFrameClick" />
                     <Button Content="Clear Scene" ToolTip.Tip="Remove every model and map from the viewer" Click="OnClearSceneClick" />
+                    <ComboBox x:Name="CameraModeBox" SelectedIndex="0" VerticalAlignment="Center"
+                              ToolTip.Tip="Orbit: drag turns around the model. Fly: drag looks around, WASD flies (FModel's Fly Cam)">
+                        <ComboBoxItem Content="Orbit" />
+                        <ComboBoxItem Content="Fly" />
+                    </ComboBox>
                     <CheckBox x:Name="TexturesToggle" Content="Textures" IsChecked="True" />
                     <CheckBox x:Name="NormalMapsToggle" Content="Normal Maps" IsChecked="True"
                               ToolTip.Tip="Normal maps and roughness / metallic / occlusion masks" />
@@ -150,9 +155,8 @@
                              ShowBones="{Binding #BonesToggle.IsChecked}" />
             <TextBlock x:Name="PlaceholderText" HorizontalAlignment="Center" VerticalAlignment="Center" Classes="dim"
                        Text="Double-click meshes in Packages to add them here, a map to explore it, or an animation to play it on the selected mesh" IsHitTestVisible="False" />
-            <TextBlock HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="10,0,0,8" Classes="dim" FontSize="11"
-                       IsHitTestVisible="False"
-                       Text="Drag: orbit · Right-drag or Shift-drag: pan · Scroll or pinch: zoom · WASD/QE: move · F: frame" />
+            <TextBlock x:Name="HintText" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="10,0,10,8" Classes="dim"
+                       FontSize="11" TextWrapping="Wrap" IsHitTestVisible="False" />
         </Grid>
     </DockPanel>
 </Window>

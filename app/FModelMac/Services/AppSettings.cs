@@ -104,6 +104,10 @@ public sealed class AppSettings
     }
     private int _previewMaxTextureSize = 1024;
 
+    /// <summary>FModel's camera mode for the 3D viewer: Orbit (Arcball) or Fly (Fly Cam).</summary>
+    [JsonConverter(typeof(StringEnumConverter))]
+    public Rendering.CameraMode CameraMode { get; set; } = Rendering.CameraMode.Orbit;
+
     // FModel's new asset explorer: a grid (or list) of the selected folder in place of the asset tabs
     /// <summary>FModel's "Preview New Explorer System" switch.</summary>
     public bool NewAssetExplorer { get; set; } = true;
