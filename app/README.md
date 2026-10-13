@@ -38,7 +38,12 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
 `#32323F`, `#262630`…) y sus acentos (`#206BD4` listo, `#D49220` cargando, `#C22B2B` error).
 
 - **Menú:** Directory (Selector, AES, Archives Info), Packages (Search ⌘⇧F, References ⌘⇧R),
-  Views, Settings, Help. Lo que todavía no existe en macOS (Image Merger) aparece deshabilitado.
+  Views, Settings, Help.
+- **Image Merger (Views › Image Merger):** como en FModel, une varias imágenes en filas (Images Per
+  Row, que arranca en la raíz cuadrada del número de imágenes, y Margin Between Images, que se
+  guarda), con Add…, Move Up/Down, Remove, Clear, Open Image y Save Image. Además de archivos
+  (PNG, JPEG, BMP, GIF, WebP y TIFF, este último convertido con `sips` de macOS), acepta texturas
+  directo desde su vista previa: clic derecho › Add to Image Merger.
 - **Backup (Directory › Backup) y Loading Mode "All (New)" / "All (Modified)":** como en FModel, un
   backup (`.fbkp`) guarda la ruta, el tamaño y el cifrado de todos los archivos del juego; al cargar
   con All (New) o All (Modified) se elige un backup más viejo y sólo se ven los archivos nuevos o

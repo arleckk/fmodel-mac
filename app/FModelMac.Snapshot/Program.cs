@@ -884,6 +884,37 @@ async Task RunAsync()
     Save(backupWindow, "15-backup.png");
     backupWindow.Close();
 
+    // Image Merger: textures added from their tabs, a TIFF converted by sips, the layout, the window
+    foreach (var name in new[] { "T_BC1.uasset", "T_BC7.uasset", "T_Mips.uasset", "T_BGRA8.uasset", "T_G8.uasset" })
+    {
+        await vm.ExtractAsync(vm.AllFiles().First(f => f.Name == name));
+        vm.AddImageToMergerCommand.Execute(null);
+    }
+    var tiffSource = Path.Combine(Path.GetTempPath(), "fmodelmac-merger.png");
+    File.WriteAllBytes(tiffSource, vm.MergerImages[0].Data);
+    var tiffPath = Path.ChangeExtension(tiffSource, ".tiff");
+    System.Diagnostics.Process.Start("/usr/bin/sips", ["-s", "format", "tiff", tiffSource, "--out", tiffPath])!.WaitForExit();
+    var tiff = ImageMerger.Load(tiffPath);
+    File.Delete(tiffSource);
+    File.Delete(tiffPath);
+    if (tiff is not null) vm.MergerImages.Add(tiff with { Name = "From TIFF" });
+    var sizes = string.Join(", ", vm.MergerImages.Select(i => $"{i.Name} {i.Details}"));
+    var (_, mergedW, mergedH) = ImageMerger.Merge(vm.MergerImages.ToArray(), 3, 5);
+    Console.WriteLine($"Image Merger: {vm.MergerImages.Count} images ({sizes}) | TIFF read: {tiff is not null} | 3 per row, margin 5: {mergedW}×{mergedH}");
+    var merger = new ImageMergerWindow(vm);
+    merger.Show();
+    await Task.Delay(800);
+    Dispatcher.UIThread.RunJobs();
+    Console.WriteLine($"  window: {merger.FindControl<TextBlock>("ResultText")!.Text}");
+    Save(merger, "16-image-merger.png");
+    var mergerList = merger.FindControl<ListBox>("ImagesList")!;
+    mergerList.SelectedItems!.Add(vm.MergerImages[2]);
+    merger.FindControl<Button>("UpButton")!.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+    var afterUp = string.Join(",", vm.MergerImages.Select(i => i.Name));
+    merger.FindControl<Button>("RemoveButton")!.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+    Console.WriteLine($"  move up T_Mips: {afterUp} | remove it: {string.Join(",", vm.MergerImages.Select(i => i.Name))}");
+    merger.Close();
+
     // Export Session: queue meshes, textures, an animation and a world, then export them together
     vm.Settings.ExportImmediately = false;
     async Task Queue(IAsyncRelayCommand<System.Collections.IList?> command, params string[] names) =>

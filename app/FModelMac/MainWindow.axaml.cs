@@ -44,6 +44,7 @@ public partial class MainWindow : Window
             _vm.SoundsReady -= OnSoundsReady;
             _vm.ReferencesReady -= OnReferencesReady;
             _vm.Favorites.CollectionChanged -= OnFavoritesChanged;
+            _vm.MergerImageAdded -= OnMergerImageAdded;
             _vm.AnimationReady = null;
         }
 
@@ -52,6 +53,7 @@ public partial class MainWindow : Window
 
         _vm.SetClipboardText = text => Clipboard?.SetTextAsync(text) ?? Task.CompletedTask;
         _vm.PickBackupFile = PickBackupFileAsync;
+        _vm.MergerImageAdded += OnMergerImageAdded;
         _vm.Favorites.CollectionChanged += OnFavoritesChanged;
         BuildFavoritesMenu();
         _vm.PropertyChanged += OnViewModelPropertyChanged;
@@ -288,6 +290,23 @@ public partial class MainWindow : Window
     {
         if (Vm.SelectedFolder is { } folder && Clipboard is { } clipboard) await clipboard.SetTextAsync(folder.FullPath);
     }
+
+    private ImageMergerWindow? _imageMerger;
+
+    private void OnImageMergerClick(object? sender, RoutedEventArgs e) => ShowImageMerger();
+
+    public ImageMergerWindow ShowImageMerger()
+    {
+        if (_imageMerger is not { IsVisible: true })
+        {
+            _imageMerger = new ImageMergerWindow(Vm);
+            _imageMerger.Show(this);
+        }
+        _imageMerger.Activate();
+        return _imageMerger;
+    }
+
+    private void OnMergerImageAdded() => ShowImageMerger();
 
     private ExportSessionWindow? _exportSession;
 

@@ -90,7 +90,7 @@
                 <MenuItem Header="Audio Player" Click="OnAudioPlayerClick">
                     <MenuItem.Icon><c:Glyph Data="{StaticResource AudioIcon}" /></MenuItem.Icon>
                 </MenuItem>
-                <MenuItem Header="Image Merger" IsEnabled="False">
+                <MenuItem Header="Image Merger" Click="OnImageMergerClick">
                     <MenuItem.Icon><c:Glyph Data="{StaticResource ImageMergerIcon}" /></MenuItem.Icon>
                 </MenuItem>
             </MenuItem>
@@ -432,6 +432,9 @@
                                                 </MenuItem>
                                                 <MenuItem Header="Save Image" Click="OnSaveImageClick">
                                                     <MenuItem.Icon><c:Glyph Data="{StaticResource SaveIcon}" /></MenuItem.Icon>
+                                                </MenuItem>
+                                                <MenuItem Header="Add to Image Merger" Command="{Binding AddImageToMergerCommand}">
+                                                    <MenuItem.Icon><c:Glyph Data="{StaticResource ImageMergerIcon}" /></MenuItem.Icon>
                                                 </MenuItem>
                                             </ContextMenu>
                                         </Image.ContextMenu>

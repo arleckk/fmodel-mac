@@ -1043,6 +1043,24 @@ public sealed partial class MainViewModel : ObservableObject
         Process.Start(new ProcessStartInfo("open", [path]) { UseShellExecute = false });
     }
 
+    // ---------- Image Merger ----------
+
+    /// <summary>The Image Merger's images, kept while the app runs so textures can be added from their tabs.</summary>
+    public ObservableCollection<MergeImage> MergerImages { get; } = [];
+
+    /// <summary>Raised when an image was added from a tab, so the window can be shown.</summary>
+    public event Action? MergerImageAdded;
+
+    [RelayCommand]
+    private void AddImageToMerger()
+    {
+        if (SelectedTab?.ImagePng is not { } png) return;
+        if (MergeImage.FromBytes(SelectedTab.ImageName ?? SelectedTab.Header, png) is not { } image) return;
+        MergerImages.Add(image);
+        Log(LogKind.Information, $"Added '{image.Name}' to the Image Merger ({MergerImages.Count} image(s))");
+        MergerImageAdded?.Invoke();
+    }
+
     // ---------- Menus ----------
 
     [RelayCommand]

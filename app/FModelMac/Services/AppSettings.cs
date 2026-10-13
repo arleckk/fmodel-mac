@@ -89,6 +89,7 @@ public sealed class AppSettings
         ExportOptionValues.FromSettings(this).ToOptions(CurrentVersioning.PlatformValue, meshFormat, naniteFormat);
 
     public bool PreviewMeshes { get; set; } = true;
+    public int ImageMergerMargin { get; set; } = 5;
     // FModel's "Serialize Script Bytecode" / "Serialize Inlined Shader Maps": extra data in the properties JSON
     public bool ReadScriptData { get; set; }
     public bool ReadShaderMaps { get; set; }
