@@ -1,7 +1,6 @@
 #!/bin/bash
-# Recreates the folders this repo doesn't track, at the exact versions FModelMac was built against:
+# Recreates the folders this repo doesn't track, at the exact versions FModel was built against:
 #   upstream/   4sval/FModel (with the CUE4Parse submodule) + patches/CUE4Parse.patch
-#   oodle-src/  WorkingRobot/OodleUE, built for macOS arm64 (liboodle-data-shared.dylib)
 #   vendor/     vgmstream, via app/packaging/build-vgmstream.sh (optional: --with-vgmstream)
 # Safe to run again: existing checkouts are reused and the patch is only applied once.
 set -euo pipefail
@@ -10,8 +9,6 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FMODEL_REPO="https://github.com/4sval/FModel.git"
 FMODEL_COMMIT="d61549776a0ca9411903804640c7a61de721c4e6"
 CUE4PARSE_COMMIT="3fc091a085a609bdb7bd2f8934890051b88ac18b"
-OODLE_REPO="https://github.com/WorkingRobot/OodleUE.git"
-OODLE_COMMIT="5e38cb6c99c588b51cde0cae4a6420d6bc865605"
 
 with_vgmstream=false
 [[ "${1:-}" == "--with-vgmstream" ]] && with_vgmstream=true
@@ -44,15 +41,6 @@ if git -C "$ROOT/upstream/CUE4Parse" apply --reverse --check "$PATCH" 2>/dev/nul
     echo "already applied"
 else
     git -C "$ROOT/upstream/CUE4Parse" apply "$PATCH"
-fi
-
-step "OodleUE $OODLE_COMMIT -> oodle-src/"
-checkout "$OODLE_REPO" "$OODLE_COMMIT" "$ROOT/oodle-src"
-if [[ ! -f "$ROOT/oodle-src/build/builds/macos/lib/liboodle-data-shared.dylib" ]]; then
-    step "Building Oodle for macOS"
-    cmake -S "$ROOT/oodle-src/build" -B "$ROOT/oodle-src/build/builds/macos" -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
-    cmake --build "$ROOT/oodle-src/build/builds/macos" --config Release -j "$(sysctl -n hw.ncpu)"
 fi
 
 if $with_vgmstream; then

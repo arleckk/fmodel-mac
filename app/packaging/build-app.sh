@@ -1,14 +1,14 @@
 #!/bin/bash
-# Builds dist/FModelMac.app: self-contained .NET publish for osx-arm64, icon, Info.plist, ad-hoc signature.
+# Builds dist/FModel.app: self-contained .NET publish for osx-arm64, icon, Info.plist, ad-hoc signature.
 # Usage: app/packaging/build-app.sh   (no .NET needed on the machine that runs the resulting app)
 set -euo pipefail
 
 PACKAGING_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_ROOT="$(dirname "$PACKAGING_DIR")"
-PROJECT="$APP_ROOT/FModelMac/FModelMac.csproj"
+PROJECT="$APP_ROOT/FModel/FModel.csproj"
 RID="osx-arm64"
-APP_NAME="FModelMac"
-BUNDLE_ID="local.fmodelmac"
+APP_NAME="FModel"
+BUNDLE_ID="io.github.arleckk.fmodel"
 DIST="$APP_ROOT/dist"
 PUBLISH_DIR="$DIST/publish-$RID"
 BUNDLE="$DIST/$APP_NAME.app"
@@ -24,7 +24,7 @@ rm -rf "$PUBLISH_DIR"
 dotnet publish "$PROJECT" -c Release -r "$RID" --self-contained true \
     -p:PublishReadyToRun=true -p:DebugType=none -o "$PUBLISH_DIR" -v quiet -nologo
 
-for lib in CUE4Parse-Natives.dylib liboodle-data-shared.dylib libAvaloniaNative.dylib libSkiaSharp.dylib; do
+for lib in CUE4Parse-Natives.dylib libAvaloniaNative.dylib libSkiaSharp.dylib; do
     if [[ ! -f "$PUBLISH_DIR/$lib" ]]; then
         echo "error: $lib missing from publish output" >&2
         exit 1
@@ -48,6 +48,11 @@ rm -rf "$BUNDLE"
 mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 cp -R "$PUBLISH_DIR/." "$BUNDLE/Contents/MacOS/"
 cp "$PACKAGING_DIR/$APP_NAME.icns" "$BUNDLE/Contents/Resources/$APP_NAME.icns"
+
+# The app is GPL-3.0: its license and the third-party notices ship with it
+mkdir -p "$BUNDLE/Contents/Resources/Licenses"
+cp "$APP_ROOT/../LICENSE" "$BUNDLE/Contents/Resources/Licenses/LICENSE.txt"
+cp "$APP_ROOT/../NOTICE" "$BUNDLE/Contents/Resources/Licenses/NOTICE.txt"
 
 # unluac is MIT: its notice ships with it
 UNLUAC_LICENSE="$APP_ROOT/../vendor/unluac-build/LICENSE-unluac.txt"

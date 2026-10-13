@@ -98,7 +98,7 @@ def main() -> None:
     master = build(largest_ico_frame(ico), theme)
     master.save(out_dir / f"icon-{theme}-1024.png")
 
-    iconset = out_dir / "FModelMac.iconset"
+    iconset = out_dir / "FModel.iconset"
     iconset.mkdir(exist_ok=True)
     for size, scale in ICONSET:
         px = size * scale

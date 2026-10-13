@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsPackable>false</IsPackable>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <UpstreamDir>$(MSBuildThisFileDirectory)../../upstream/</UpstreamDir>
+    <VgmstreamCli>$(MSBuildThisFileDirectory)../../vendor/vgmstream-build/vgmstream-cli</VgmstreamCli>
+    <UnluacDylib>$(MSBuildThisFileDirectory)../../vendor/unluac-build/libunluac.dylib</UnluacDylib>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(UpstreamDir)CUE4Parse/CUE4Parse/CUE4Parse.csproj" />
+    <ProjectReference Include="$(UpstreamDir)CUE4Parse/CUE4Parse-Conversion/CUE4Parse-Conversion.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Avalonia 12 moved to SkiaSharp 3.x; CUE4Parse-Conversion pins SkiaSharp [2.88.9], so stay on 11.3 -->
+    <PackageReference Include="Avalonia" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.22" />
+    <PackageReference Include="Avalonia.AvaloniaEdit" Version="11.4.1" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <PackageReference Include="NVorbis" Version="0.10.5" />
+    <PackageReference Include="Serilog" Version="4.3.1" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
+    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- FModel's icons and .xshd syntax definitions (GPL-3.0, same as FModel) -->
+    <AvaloniaResource Include="Assets/**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- No Oodle library: CUE4Parse decompresses Oodle with OodleSharp (managed, MIT), so nothing proprietary ships -->
+    <!-- vgmstream built with static, decoder-only dependencies (packaging/build-vgmstream.sh) -->
+    <None Include="$(VgmstreamCli)" Condition="Exists('$(VgmstreamCli)')" Link="vgmstream-cli">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- FModel's unluac built for macOS with GraalVM Native Image (packaging/build-unluac.sh) -->
+    <None Include="$(UnluacDylib)" Condition="Exists('$(UnluacDylib)')" Link="libunluac.dylib">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

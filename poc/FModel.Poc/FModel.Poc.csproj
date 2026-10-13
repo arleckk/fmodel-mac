@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>FModel.Poc</RootNamespace>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <UpstreamDir>$(MSBuildThisFileDirectory)../../upstream/</UpstreamDir>
+    <OodleDylib>$(MSBuildThisFileDirectory)../../oodle-src/build/builds/macos/lib/liboodle-data-shared.dylib</OodleDylib>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(UpstreamDir)CUE4Parse/CUE4Parse/CUE4Parse.csproj" />
+    <ProjectReference Include="$(UpstreamDir)CUE4Parse/CUE4Parse-Conversion/CUE4Parse-Conversion.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Versions are not centrally managed here, so pin them to what CUE4Parse uses -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <PackageReference Include="Serilog" Version="4.3.1" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Oodle built from WorkingRobot/OodleUE for osx-arm64 (see README) -->
+    <None Include="$(OodleDylib)" Condition="Exists('$(OodleDylib)')" Link="liboodle-data-shared.dylib">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

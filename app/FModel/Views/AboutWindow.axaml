@@ -1,0 +1,41 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:c="using:FModel.Controls"
+        x:Class="FModel.Views.AboutWindow"
+        Title="About FModel"
+        Width="480" SizeToContent="Height" CanResize="False"
+        WindowStartupLocation="CenterOwner">
+    <StackPanel>
+        <StackPanel Margin="20,15,20,10" Spacing="6">
+            <TextBlock Text="FModel" HorizontalAlignment="Center" FontSize="20" FontWeight="SemiBold" />
+            <TextBlock x:Name="VersionText" HorizontalAlignment="Center" Classes="dim" />
+            <TextBlock TextWrapping="Wrap" TextAlignment="Center" Margin="0,6,0,0"
+                       Text="An unofficial macOS port of FModel, the archive explorer for Unreal Engine games. It uses CUE4Parse as its parsing library for UE4 and UE5 archive formats." />
+            <TextBlock TextWrapping="Wrap" TextAlignment="Center" Classes="dim" FontSize="11"
+                       Text="Not affiliated with or endorsed by the FModel authors or Epic Games. Report issues with this port at github.com/arleckk/fmodel-mac." />
+        </StackPanel>
+        <Border Background="{StaticResource Layer2BackgroundBrush}" Margin="10" Padding="10">
+            <StackPanel>
+                <c:SectionSeparator Text="CREDITS" Margin="0,0,0,8" />
+                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto">
+                    <TextBlock Text="FModel" />
+                    <TextBlock Grid.Column="1" Text="4sval and contributors (GPL-3.0)" />
+                    <TextBlock Grid.Row="1" Text="CUE4Parse" />
+                    <TextBlock Grid.Row="1" Grid.Column="1" Text="FabianFG and contributors (Apache-2.0)" />
+                    <TextBlock Grid.Row="2" Text="AdonisUI theme colors" />
+                    <TextBlock Grid.Row="2" Grid.Column="1" Text="Benjamin Rühl (MIT)" />
+                    <TextBlock Grid.Row="3" Text="OodleSharp" />
+                    <TextBlock Grid.Row="3" Grid.Column="1" Text="NotOfficer (MIT)" />
+                    <TextBlock Grid.Row="4" Text="macOS port" />
+                    <TextBlock Grid.Row="4" Grid.Column="1" Text="arleckk (GPL-3.0)" />
+                </Grid>
+            </StackPanel>
+        </Border>
+        <Border Background="{StaticResource Layer1BackgroundBrush}">
+            <Grid ColumnDefinitions="*,Auto" Margin="30,12,6,12">
+                <Button Grid.Column="1" MinWidth="78" Margin="0,0,12,0" Content="OK" IsDefault="True" IsCancel="True"
+                        Click="OnOkClick" />
+            </Grid>
+        </Border>
+    </StackPanel>
+</Window>

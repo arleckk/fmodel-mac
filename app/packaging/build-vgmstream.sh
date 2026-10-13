@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds a self-contained vgmstream-cli (macOS arm64) for bundling inside FModelMac.app.
+# Builds a self-contained vgmstream-cli (macOS arm64) for bundling inside FModel.app.
 #
 # Output: vendor/vgmstream-build/vgmstream-cli
 #   - links only against macOS system libraries (/usr/lib, /System/Library)

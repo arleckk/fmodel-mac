@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds FModel's unluac (Lua 5.0–5.4 decompiler, Java, MIT) as a macOS arm64 shared library with GraalVM
-# Native Image, for bundling inside FModelMac.app. FModel only publishes unluac.dll (Windows) and unluac.so (Linux).
+# Native Image, for bundling inside FModel.app. The original FModel only publishes unluac.dll (Windows) and unluac.so (Linux).
 #
 # Output: vendor/unluac-build/libunluac.dylib (exports unluac_create_isolate, unluac_tear_down_isolate,
 #         unluac_decompile_buffer, unluac_free: what CUE4Parse's Unluac class binds)

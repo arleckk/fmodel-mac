@@ -1,8 +1,9 @@
 # Third-party checkouts and builds: recreated by scripts/setup-upstream.sh
 # (our CUE4Parse changes live in patches/CUE4Parse.patch)
 /upstream/
-/oodle-src/
 /vendor/
+# Only for rerunning the proof of concept's native Oodle comparison (see poc/README.md)
+/oodle-src/
 
 # .NET build output
 bin/
@@ -16,8 +17,8 @@ obj/
 /app/dist/
 
 # Test harness output
-/app/FModelMac.Snapshot/snapshots/
-/app/FModelMac.Snapshot/out/
+/app/FModel.Snapshot/snapshots/
+/app/FModel.Snapshot/out/
 
 # macOS
 .DS_Store

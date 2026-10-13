@@ -1,0 +1,52 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:FModel.ViewModels"
+        x:Class="FModel.Views.StreamingLevelFilterWindow"
+        x:DataType="vm:StreamingLevelFilterViewModel"
+        Title="Streaming Levels"
+        Width="520" Height="600" MinWidth="420" MinHeight="360"
+        WindowStartupLocation="CenterOwner">
+    <Window.Styles>
+        <Style Selector="TreeViewItem">
+            <Setter Property="IsExpanded" Value="{ReflectionBinding IsExpanded, Mode=TwoWay}" />
+        </Style>
+    </Window.Styles>
+    <DockPanel>
+        <!-- FModel's StreamingLevelFilterWindow: Skip, then OK -->
+        <Border DockPanel.Dock="Bottom" Background="{StaticResource Layer1BackgroundBrush}">
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto" Margin="12,10,6,10">
+                <Button Content="Select All" Margin="0,0,6,0" Click="OnSelectAllClick" />
+                <Button Grid.Column="1" Content="Select None" Click="OnSelectNoneClick" />
+                <Button Grid.Column="3" MinWidth="78" Margin="0,0,12,0" Content="Skip" Click="OnSkipClick"
+                        ToolTip.Tip="Export the world without any of these levels" />
+                <Button Grid.Column="4" MinWidth="78" Margin="0,0,6,0" Content="OK" IsDefault="True" Classes="accent" Click="OnOkClick" />
+            </Grid>
+        </Border>
+
+        <StackPanel DockPanel.Dock="Top" Margin="16,12,16,8" Spacing="4">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBlock Text="{Binding TotalCount}" FontSize="26" FontWeight="SemiBold" VerticalAlignment="Bottom" />
+                <TextBlock Text="streamed levels" Classes="dim" VerticalAlignment="Bottom" Margin="0,0,0,5" />
+            </StackPanel>
+            <TextBlock TextWrapping="Wrap">
+                <Run Text="{Binding WorldName}" FontWeight="SemiBold" /><Run Text=" loads these levels at runtime: select which ones to export." />
+            </TextBlock>
+            <TextBlock TextWrapping="Wrap" Classes="dim" FontSize="11"
+                       Text="Unchecked levels are still referenced from the world's USD, but not exported. Skip to ignore all of them." />
+        </StackPanel>
+
+        <Border Background="{StaticResource Layer2BackgroundBrush}" Margin="10,0,10,10" Padding="4">
+            <TreeView ItemsSource="{Binding Children}">
+                <TreeView.DataTemplates>
+                    <TreeDataTemplate DataType="vm:LevelGroupNode" ItemsSource="{Binding Children}">
+                        <!-- TextBlock content: a plain string would turn the first '_' into an access key -->
+                        <CheckBox IsThreeState="True" IsChecked="{Binding IsChecked}"><TextBlock Text="{Binding Name}" /></CheckBox>
+                    </TreeDataTemplate>
+                    <DataTemplate DataType="vm:LevelNode">
+                        <CheckBox IsChecked="{Binding IsChecked}"><TextBlock Text="{Binding Name}" /></CheckBox>
+                    </DataTemplate>
+                </TreeView.DataTemplates>
+            </TreeView>
+        </Border>
+    </DockPanel>
+</Window>

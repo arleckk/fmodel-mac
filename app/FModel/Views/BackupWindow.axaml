@@ -1,0 +1,61 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:c="using:FModel.Controls"
+        xmlns:s="using:FModel.Services"
+        x:Class="FModel.Views.BackupWindow"
+        Title="Backup"
+        Width="560" SizeToContent="Height" CanResize="False"
+        WindowStartupLocation="CenterOwner">
+    <StackPanel>
+        <!-- FModel's BackupManager -->
+        <StackPanel Margin="20,15,20,10" Spacing="6">
+            <TextBlock Text="What is this?" HorizontalAlignment="Center" FontSize="20" FontWeight="SemiBold" />
+            <TextBlock TextWrapping="Wrap" TextAlignment="Center"
+                       Text="Backups are used when loading new &amp; modified archives: the game is compared with the backup you pick, so only what changed is shown. A backup stores every file of the game at one point in time; create one now to compare a future update with it." />
+        </StackPanel>
+        <Border Background="{StaticResource Layer2BackgroundBrush}" Margin="10,0,10,10" Padding="10">
+            <StackPanel>
+                <c:SectionSeparator Text="CREATE" Margin="0,0,0,8" />
+                <Grid ColumnDefinitions="*,10,Auto">
+                    <TextBlock x:Name="CreateText" VerticalAlignment="Center" TextWrapping="Wrap" />
+                    <Button Grid.Column="2" MinWidth="78" Content="Create" Classes="accent" Click="OnCreateClick" />
+                </Grid>
+
+                <c:SectionSeparator Text="YOUR BACKUPS" />
+                <ListBox x:Name="LocalList" Height="170" SelectionChanged="OnLocalSelectionChanged">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="s:BackupFile">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Grid.Column="1" Classes="dim" FontSize="11" Margin="10,0,0,0" Text="{Binding Details}"
+                                           VerticalAlignment="Center" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                <TextBlock x:Name="LocalEmpty" Classes="dim" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" />
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="6" Margin="0,8,0,0">
+                    <Button x:Name="RevealButton" Content="Show in Finder" Click="OnRevealClick" />
+                    <Button x:Name="LoadNewButton" Content="Load New" Click="OnLoadNewClick"
+                            ToolTip.Tip="Load only the files this backup doesn't have (Loading Mode: All (New))" />
+                    <Button x:Name="LoadModifiedButton" Content="Load Modified" Click="OnLoadModifiedClick"
+                            ToolTip.Tip="Load only the files whose size or encryption changed (Loading Mode: All (Modified))" />
+                </StackPanel>
+
+                <c:SectionSeparator Text="FMODEL'S BACKUPS" />
+                <Grid ColumnDefinitions="*,6,Auto,6,Auto">
+                    <ComboBox x:Name="OnlineBox" HorizontalAlignment="Stretch" PlaceholderText="Not loaded" />
+                    <Button Grid.Column="2" Content="Refresh" Click="OnRefreshOnlineClick" ToolTip.Tip="{x:Static s:OnlineBackups.ListUrl}" />
+                    <Button x:Name="DownloadButton" Grid.Column="4" Content="Download" Click="OnDownloadClick" />
+                </Grid>
+                <TextBlock x:Name="OnlineText" Classes="dim" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"
+                           Text="Pre-made backups of popular games, from FModel's service. Downloads go to your backups folder." />
+            </StackPanel>
+        </Border>
+        <Border Background="{StaticResource Layer1BackgroundBrush}">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="12,10,6,10">
+                <Button MinWidth="78" Margin="0,0,6,0" Content="OK" IsDefault="True" IsCancel="True" Click="OnOkClick" />
+            </StackPanel>
+        </Border>
+    </StackPanel>
+</Window>

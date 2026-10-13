@@ -1,0 +1,72 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="using:FModel.Controls"
+             xmlns:v="using:FModel.Views"
+             x:Class="FModel.Views.FileSearchPanel">
+    <DockPanel>
+        <Grid DockPanel.Dock="Top" ColumnDefinitions="*,5,Auto,Auto">
+            <c:SearchTextBox x:Name="Query" Watermark="Search by path..." />
+            <ToggleButton x:Name="MatchCase" Grid.Column="2" Padding="5" ToolTip.Tip="Match Case"
+                          IsCheckedChanged="OnOptionChanged">
+                <c:Glyph Data="{StaticResource MatchCaseIcon}" />
+            </ToggleButton>
+            <ToggleButton x:Name="UseRegex" Grid.Column="3" Padding="5" ToolTip.Tip="Regex"
+                          IsCheckedChanged="OnOptionChanged">
+                <c:Glyph Data="{StaticResource RegexIcon}" />
+            </ToggleButton>
+        </Grid>
+
+        <TextBlock DockPanel.Dock="Bottom" x:Name="Summary" Classes="dim" Margin="0,6,0,0" />
+
+        <!-- Column headers -->
+        <Grid DockPanel.Dock="Top" ColumnDefinitions="*,200,90" Margin="5,8,5,2">
+            <TextBlock Text="Path" FontWeight="SemiBold" />
+            <TextBlock Grid.Column="1" Text="Archive" FontWeight="SemiBold" Margin="10,0,0,0" />
+            <TextBlock Grid.Column="2" Text="Size" FontWeight="SemiBold" HorizontalAlignment="Right" />
+        </Grid>
+
+        <Panel>
+            <ListBox x:Name="Results" DoubleTapped="OnResultDoubleTapped" KeyDown="OnResultKeyDown">
+                <ListBox.ContextMenu>
+                    <ContextMenu Opening="OnMenuOpening">
+                        <MenuItem Header="Go To" Click="OnGoToClick">
+                            <MenuItem.Icon><c:Glyph Data="{StaticResource GoToIcon}" /></MenuItem.Icon>
+                        </MenuItem>
+                        <MenuItem Header="Extract in New Tab" Click="OnExtractNewTabClick">
+                            <MenuItem.Icon><c:Glyph Data="{StaticResource ExtractIcon}" /></MenuItem.Icon>
+                        </MenuItem>
+                        <MenuItem x:Name="MetadataItem" Header="Show Metadata" Click="OnShowMetadataClick">
+                            <MenuItem.Icon><c:Glyph Data="{StaticResource InfoIcon}" /></MenuItem.Icon>
+                        </MenuItem>
+                        <MenuItem x:Name="ReferencesItem" Header="Find References" Click="OnFindReferencesClick">
+                            <MenuItem.Icon><c:Glyph Data="{StaticResource SearchIcon}" /></MenuItem.Icon>
+                        </MenuItem>
+                        <MenuItem x:Name="DecompileItem" Header="Decompile Blueprint" Click="OnDecompileClick">
+                            <MenuItem.Icon><c:Glyph Data="{StaticResource BlueprintIcon}" /></MenuItem.Icon>
+                        </MenuItem>
+                        <Separator />
+                        <MenuItem Header="Copy">
+                            <MenuItem.Icon><c:Glyph Data="{StaticResource CopyIcon}" /></MenuItem.Icon>
+                            <MenuItem Header="Package Path" Tag="PackagePath" Click="OnCopyClick" />
+                            <MenuItem Header="Package Name" Tag="PackageName" Click="OnCopyClick" />
+                            <MenuItem Header="Directory Path" Tag="DirectoryPath" Click="OnCopyClick" />
+                            <MenuItem Header="Package Path w/o Extension" Tag="PathNoExtension" Click="OnCopyClick" />
+                            <MenuItem Header="Package Name w/o Extension" Tag="NameNoExtension" Click="OnCopyClick" />
+                        </MenuItem>
+                    </ContextMenu>
+                </ListBox.ContextMenu>
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="v:SearchResult">
+                        <Grid ColumnDefinitions="*,200,90">
+                            <TextBlock Text="{Binding Path}" TextTrimming="LeadingCharacterEllipsis" />
+                            <TextBlock Grid.Column="1" Text="{Binding Archive}" Margin="10,0,0,0" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Grid.Column="2" Text="{Binding Size}" HorizontalAlignment="Right" />
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+            <TextBlock x:Name="Empty" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,20,0,0"
+                       Foreground="{StaticResource AdonisErrorBrush}" IsVisible="False" />
+        </Panel>
+    </DockPanel>
+</UserControl>

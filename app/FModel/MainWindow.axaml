@@ -1,0 +1,707 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:FModel.ViewModels"
+        xmlns:c="using:FModel.Controls"
+        xmlns:v="using:FModel.Views"
+        xmlns:local="using:FModel"
+        xmlns:svc="using:FModel.Services"
+        xmlns:ae="using:AvaloniaEdit"
+        x:Class="FModel.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Title="{Binding Title}"
+        Width="1600" Height="950" MinWidth="1000" MinHeight="600"
+        WindowStartupLocation="CenterScreen">
+
+    <Window.Styles>
+        <!-- FModel's floating explorer switches: faded until the pointer is over them -->
+        <Style Selector="Border.floating">
+            <Setter Property="Opacity" Value="0.5" />
+            <Setter Property="Transitions">
+                <Transitions>
+                    <DoubleTransition Property="Opacity" Duration="0:0:0.2" />
+                </Transitions>
+            </Setter>
+            <Setter Property="BoxShadow" Value="0 2 8 0 #66000000" />
+        </Style>
+        <Style Selector="Border.floating:pointerover">
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+        <Style Selector="ToggleButton.floating">
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Background" Value="{StaticResource Layer3BackgroundBrush}" />
+        </Style>
+        <Style Selector="ToggleButton.textures:checked /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="MediumPurple" />
+        </Style>
+        <!-- Image pager arrows: readable over any texture -->
+        <Style Selector="Button.imagePager">
+            <Setter Property="Background" Value="#B0202128" />
+            <Setter Property="CornerRadius" Value="14" />
+            <Setter Property="Padding" Value="6" />
+            <Setter Property="Width" Value="28" />
+            <Setter Property="Height" Value="28" />
+        </Style>
+        <Style Selector="Button.imagePager:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#E0206BD4" />
+        </Style>
+        <!-- Folder tree expander arrow: FModel rotates ArrowIcon -90° (collapsed) / -45° (expanded) -->
+        <Style Selector="c|Glyph.arrow">
+            <Setter Property="RenderTransform" Value="rotate(-90deg)" />
+            <Setter Property="Transitions">
+                <Transitions>
+                    <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.2" />
+                </Transitions>
+            </Setter>
+        </Style>
+        <Style Selector="c|Glyph.arrow.expanded">
+            <Setter Property="RenderTransform" Value="rotate(-45deg)" />
+        </Style>
+        <!-- Locked archives are greyed out and cannot be selected, like FModel's DirectoryFilesListBox -->
+        <Style Selector="ListBox#ArchivesList ListBoxItem" x:DataType="vm:ArchiveItem">
+            <Setter Property="IsEnabled" Value="{Binding IsEnabled}" />
+        </Style>
+        <Style Selector="ListBox.folders ListBoxItem">
+            <Setter Property="Padding" Value="0" />
+        </Style>
+        <!-- Console expander header turns accent on hover, like FModel's Expander -->
+        <Style Selector="ToggleButton.expander">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="Foreground" Value="{StaticResource AdonisForegroundBrush}" />
+        </Style>
+        <Style Selector="ToggleButton.expander:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ToggleButton.expander:checked /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ToggleButton.expander:pointerover c|Glyph">
+            <Setter Property="Foreground" Value="{StaticResource AdonisAccentBrush}" />
+        </Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto,8,*,Auto">
+
+        <!-- ============ Menu ============ -->
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+        <Menu>
+            <MenuItem Header="Directory">
+                <MenuItem Header="Selector" Click="OnDirectorySelectorClick">
+                    <MenuItem.Icon><c:Glyph Data="{StaticResource DirectoryIcon}" /></MenuItem.Icon>
+                </MenuItem>
+                <MenuItem x:Name="ProfilesMenu" Header="Profiles">
+                    <MenuItem.Icon><c:Glyph Data="{StaticResource DirectoriesIcon}" /></MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="AES" Click="OnAesManagerClick" IsEnabled="{Binding IsReady}">
+                    <MenuItem.Icon><c:Glyph Data="{StaticResource KeyIcon}" /></MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Backup" Click="OnBackupClick" IsEnabled="{Binding IsReady}">
+                    <MenuItem.Icon><c:Glyph Data="{StaticResource BackupIcon}" /></MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Archives Info" Click="OnArchivesInfoClick" IsEnabled="{Binding IsReady}">
+                    <MenuItem.Icon><c:Glyph Data="{StaticResource InfoIcon}" /></MenuItem.Icon>
+                </MenuItem>
+            </MenuItem>
+            <MenuItem Header="Packages">
+                <MenuItem Header="Search" InputGesture="Cmd+Shift+F" HotKey="Cmd+Shift+F" Click="OnSearchClick" IsEnabled="{Binding IsReady}">
+                    <MenuItem.Icon><c:Glyph Data="{StaticResource SearchIcon}" /></MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="References" InputGesture="Cmd+Shift+R" HotKey="Cmd+Shift+R" Click="OnReferencesClick" IsEnabled="{Binding IsReady}">
+                    <MenuItem.Icon><c:Glyph Data="{StaticResource SearchIcon}" /></MenuItem.Icon>
+                </MenuItem>
+                <MenuItem x:Name="FavoritesMenu" Header="Favorite Directories" IsEnabled="{Binding IsReady}">
+                    <MenuItem.Icon><c:Glyph Data="{StaticResource DirectoriesIcon}" /></MenuItem.Icon>
+                </MenuItem>
+            </MenuItem>
+            <MenuItem Header="Views">
+                <MenuItem Header="3D Viewer" Click="OnModelViewerClick">
+                    <MenuItem.Icon><c:Glyph Data="{StaticResource MeshIcon}" /></MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Export Session" Click="OnExportSessionClick">
+                    <MenuItem.Icon><c:Glyph Data="{StaticResource ExportIcon}" /></MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Audio Player" Click="OnAudioPlayerClick">
+                    <MenuItem.Icon><c:Glyph Data="{StaticResource AudioIcon}" /></MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Image Merger" Click="OnImageMergerClick">
+                    <MenuItem.Icon><c:Glyph Data="{StaticResource ImageMergerIcon}" /></MenuItem.Icon>
+                </MenuItem>
+            </MenuItem>
+            <MenuItem Header="Settings" Click="OnSettingsClick" />
+            <MenuItem Header="Help">
+                <MenuItem Header="Donate to FModel" Command="{Binding OpenUrlCommand}" CommandParameter="{x:Static vm:MainViewModel.DonateLink}">
+                    <MenuItem.Icon><c:Glyph Data="{StaticResource GiftIcon}" /></MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Releases" Command="{Binding OpenUrlCommand}" CommandParameter="{x:Static vm:MainViewModel.ReleasesLink}">
+                    <MenuItem.Icon><c:Glyph Data="{StaticResource GitHubIcon}" /></MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Bugs Report" Command="{Binding OpenUrlCommand}" CommandParameter="{x:Static vm:MainViewModel.IssueLink}">
+                    <MenuItem.Icon><c:Glyph Data="{StaticResource BugIcon}" /></MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="FModel Discord Server" Command="{Binding OpenUrlCommand}" CommandParameter="{x:Static vm:MainViewModel.DiscordLink}">
+                    <MenuItem.Icon><c:Glyph Data="{StaticResource DiscordIcon}" /></MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="About FModel" Click="OnAboutClick">
+                    <MenuItem.Icon><c:Glyph Data="{StaticResource InfoIcon}" /></MenuItem.Icon>
+                </MenuItem>
+            </MenuItem>
+        </Menu>
+        <!-- FModel's "Preview New Explorer System" switch -->
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" Margin="0,0,8,0" VerticalAlignment="Center">
+            <TextBlock Text="Preview New Explorer System" VerticalAlignment="Center" />
+            <ToggleSwitch x:Name="NewExplorerSwitch" IsChecked="{Binding NewAssetExplorer}" OnContent="" OffContent=""
+                          MinWidth="0" VerticalAlignment="Center" />
+        </StackPanel>
+        </Grid>
+
+        <!-- ============ Main area ============ -->
+        <Grid Grid.Row="2" ColumnDefinitions="440,4,*">
+
+            <!-- ===== Left panel: Archives / Folders / Packages ===== -->
+            <Panel Grid.Column="0" Background="{StaticResource Layer2BackgroundBrush}">
+                <!-- Tab strip background (unselected tabs are darker than the panel) -->
+                <Border Height="28" VerticalAlignment="Top" Background="{StaticResource Layer3BackgroundBrush}" />
+                <TabControl Classes="fill" SelectedIndex="{Binding SelectedLeftTab}">
+
+                    <!-- Archives -->
+                    <TabItem Header="Archives">
+                        <DockPanel Margin="8,8,8,0">
+                            <Grid DockPanel.Dock="Top" RowDefinitions="Auto,5,Auto" ColumnDefinitions="Auto,10,*">
+                                <TextBlock Text="Loading Mode" VerticalAlignment="Center" />
+                                <ComboBox Grid.Column="2" HorizontalAlignment="Stretch" ItemsSource="{Binding LoadingModes}"
+                                          SelectedItem="{Binding LoadingMode}" IsEnabled="{Binding IsReady}" />
+                                <Button Grid.Row="2" Grid.ColumnSpan="3" Content="Load" HorizontalAlignment="Stretch"
+                                        Command="{Binding LoadCommand}" CommandParameter="{Binding #ArchivesList.SelectedItems}" />
+                            </Grid>
+                            <c:SectionSeparator DockPanel.Dock="Top" Text="GAME ARCHIVES" />
+                            <StackPanel DockPanel.Dock="Bottom" Margin="0,0,0,5">
+                                <c:SectionSeparator Text="INFORMATION" />
+                                <Grid Classes="info" ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,Auto">
+                                    <TextBlock Text="{Binding #ArchivesList.((vm:ArchiveItem)SelectedItem).MountPoint, FallbackValue='/'}" />
+                                    <TextBlock Grid.Column="1" Text="Mount Point" />
+                                    <TextBlock Grid.Row="1" Text="{Binding #ArchivesList.((vm:ArchiveItem)SelectedItem).FileCount, StringFormat='{}{0:N0} Files', FallbackValue='0'}" />
+                                    <TextBlock Grid.Row="1" Grid.Column="1" Text="File Count" />
+                                    <TextBlock Grid.Row="2" Text="{Binding #ArchivesList.((vm:ArchiveItem)SelectedItem).IsEncrypted, FallbackValue='False'}" />
+                                    <TextBlock Grid.Row="2" Grid.Column="1" Text="Is Encrypted" />
+                                    <TextBlock Grid.Row="3" Text="{Binding #ArchivesList.((vm:ArchiveItem)SelectedItem).Guid, FallbackValue='00000000000000000000000000000000'}" />
+                                    <TextBlock Grid.Row="3" Grid.Column="1" Text="Global Unique Identifier" />
+                                </Grid>
+                            </StackPanel>
+                            <Panel>
+                                <ListBox x:Name="ArchivesList" ItemsSource="{Binding Archives}"
+                                         SelectedItem="{Binding SelectedArchive}"
+                                         SelectionMode="{Binding IsMultipleMode, Converter={x:Static local:Converters.SelectionMode}}"
+                                         DoubleTapped="OnArchiveDoubleTapped">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:ArchiveItem">
+                                            <Grid ColumnDefinitions="Auto,*,110,75">
+                                                <Image Source="{Binding Icon}" Width="16" Height="16" Margin="0,0,4,0" />
+                                                <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="2" Classes="dim" FontSize="11" Margin="10,0,0,0" HorizontalAlignment="Right"
+                                                           VerticalAlignment="Bottom" Text="{Binding FileCountText}" />
+                                                <TextBlock Grid.Column="3" Margin="10,0,0,0" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                           Text="{Binding LengthText}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <TextBlock Text="No archives found in the specified directory" FontWeight="SemiBold"
+                                           TextAlignment="Center" Foreground="{StaticResource AdonisErrorBrush}"
+                                           IsVisible="{Binding !Archives.Count}" />
+                            </Panel>
+                        </DockPanel>
+                    </TabItem>
+
+                    <!-- Favorite Directories: the profile's shortcuts to folders of the game; double-click goes there -->
+                    <TabItem Header="Favorite Directories">
+                        <DockPanel Margin="8,8,8,0">
+                            <Grid DockPanel.Dock="Top" ColumnDefinitions="*,5,Auto">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <c:Glyph Data="{StaticResource DirectoriesIcon}" Width="16" Height="16" Margin="0,0,5,0" />
+                                    <TextBlock Text="{Binding Favorites.Count, StringFormat='{}{0} favorite directories'}" VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2" Orientation="Horizontal" IsEnabled="{Binding IsReady}">
+                                    <Button Classes="toolbar" ToolTip.Tip="Go To (double-click, Enter)" Click="OnGoToFavoriteClick"
+                                            IsEnabled="{Binding SelectedFavorite, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                        <c:Glyph Data="{StaticResource GoToIcon}" />
+                                    </Button>
+                                    <Button Classes="toolbar" ToolTip.Tip="Add Directory… (starts from the selected folder)" Click="OnAddFavoriteClick">
+                                        <c:Glyph Data="{StaticResource DirectoriesAddIcon}" />
+                                    </Button>
+                                    <Button Classes="toolbar" ToolTip.Tip="Edit Directory…" Click="OnEditFavoriteClick"
+                                            IsEnabled="{Binding SelectedFavorite, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                        <c:Glyph Data="{StaticResource EditIcon}" />
+                                    </Button>
+                                    <Button Classes="toolbar" ToolTip.Tip="Move Up" Tag="-1" Click="OnMoveFavoriteClick"
+                                            IsEnabled="{Binding SelectedFavorite, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                        <c:Glyph Data="{StaticResource ArrowIcon}" RenderTransform="rotate(180deg)" />
+                                    </Button>
+                                    <Button Classes="toolbar" ToolTip.Tip="Move Down" Tag="1" Click="OnMoveFavoriteClick"
+                                            IsEnabled="{Binding SelectedFavorite, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                        <c:Glyph Data="{StaticResource ArrowIcon}" />
+                                    </Button>
+                                    <Button Classes="toolbar" ToolTip.Tip="Delete Directory" Click="OnDeleteFavoriteClick"
+                                            IsEnabled="{Binding SelectedFavorite, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                        <c:Glyph Data="{StaticResource RemoveIcon}" />
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+                            <c:SectionSeparator DockPanel.Dock="Top" Margin="0,4,0,0" />
+                            <StackPanel DockPanel.Dock="Bottom" Margin="0,0,0,5">
+                                <c:SectionSeparator Text="INFORMATION" />
+                                <Grid Classes="info" ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto">
+                                    <TextBlock Text="{Binding SelectedFavorite.Path, FallbackValue='None'}" TextTrimming="CharacterEllipsis"
+                                               ToolTip.Tip="{Binding SelectedFavorite.Path, FallbackValue=''}" />
+                                    <TextBlock Grid.Column="1" Text="Path" />
+                                    <TextBlock Grid.Row="1" Text="{Binding SelectedFavorite.IsMissing, Converter={x:Static local:Converters.FavoriteStatus}, FallbackValue='None'}" />
+                                    <TextBlock Grid.Row="1" Grid.Column="1" Text="In This Game" />
+                                    <TextBlock Grid.Row="2" Text="{Binding FavoritesOwner}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Row="2" Grid.Column="1" Text="Saved In" />
+                                </Grid>
+                            </StackPanel>
+                            <Panel>
+                                <ListBox x:Name="FavoritesList" ItemsSource="{Binding Favorites}" SelectedItem="{Binding SelectedFavorite}"
+                                         DoubleTapped="OnFavoriteDoubleTapped">
+                                    <ListBox.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="Go To" Click="OnGoToFavoriteClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource GoToIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem Header="Edit Directory…" Click="OnEditFavoriteClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource EditIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem Header="Copy Directory Path" Click="OnCopyFavoritePathClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource CopyIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <Separator />
+                                            <MenuItem Header="Delete Directory" Click="OnDeleteFavoriteClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource RemoveIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                        </ContextMenu>
+                                    </ListBox.ContextMenu>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate x:DataType="svc:FavoriteDirectory">
+                                            <Grid ColumnDefinitions="Auto,*" Margin="0,2" Background="Transparent" ToolTip.Tip="{Binding Path}"
+                                                  Opacity="{Binding IsMissing, Converter={x:Static local:Converters.MissingOpacity}}">
+                                                <Image Source="{StaticResource TreeFolderClosedImage}" Width="16" Height="14" Margin="0,0,6,0"
+                                                       VerticalAlignment="Center" />
+                                                <StackPanel Grid.Column="1">
+                                                    <TextBlock Text="{Binding Header}" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding Path}" Classes="dim" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <TextBlock Text="No favorite directories yet: add the selected folder with the + button, or right-click a folder in the Folders tab"
+                                           Classes="dim" TextWrapping="Wrap" TextAlignment="Center" Margin="10,20"
+                                           IsVisible="{Binding !Favorites.Count}" />
+                            </Panel>
+                        </DockPanel>
+                    </TabItem>
+
+                    <!-- Folders -->
+                    <TabItem Header="Folders">
+                        <DockPanel Margin="8,8,8,0">
+                            <Grid DockPanel.Dock="Top" ColumnDefinitions="*,5,Auto">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Image Source="avares://FModel/Assets/Icons/label.png" Width="16" Height="16" Margin="0,0,3.5,0" />
+                                    <TextBlock Text="{Binding FolderSummary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                                    <Button Classes="toolbar" ToolTip.Tip="Bring Selected Folder To View" Click="OnLocateFolderClick">
+                                        <c:Glyph Data="{StaticResource LocateMeIcon}" />
+                                    </Button>
+                                    <Button Classes="toolbar" ToolTip.Tip="Collapse All" Command="{Binding CollapseAllCommand}">
+                                        <c:Glyph Data="{StaticResource FoldIcon}" />
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+                            <c:SectionSeparator DockPanel.Dock="Top" Margin="0,4,0,0" />
+                            <StackPanel DockPanel.Dock="Bottom" Margin="0,0,0,5">
+                                <c:SectionSeparator Text="INFORMATION" />
+                                <Grid Classes="info" ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto">
+                                    <TextBlock Text="{Binding SelectedFolder.PackageCount, StringFormat='{}{0:N0}', FallbackValue='0'}" />
+                                    <TextBlock Grid.Column="1" Text="Packages Count" />
+                                    <TextBlock Grid.Row="1" Text="{Binding SelectedFolder.FolderCount, StringFormat='{}{0:N0}', FallbackValue='0'}" />
+                                    <TextBlock Grid.Row="1" Grid.Column="1" Text="Folders Count" />
+                                    <TextBlock Grid.Row="2" Text="{Binding SelectedFolder.ArchiveName, FallbackValue='None'}" />
+                                    <TextBlock Grid.Row="2" Grid.Column="1" Text="Included In Archive" />
+                                    <TextBlock Grid.Row="3" Text="{Binding SelectedFolder.ArchiveMountPoint, FallbackValue='/'}" />
+                                    <TextBlock Grid.Row="3" Grid.Column="1" Text="Archive Mount Point" />
+                                    <TextBlock Grid.Row="4" Text="{Binding SelectedFolder.ArchiveVersion, FallbackValue='VER_UE4_LATEST'}" />
+                                    <TextBlock Grid.Row="4" Grid.Column="1" Text="Archive Version" />
+                                </Grid>
+                            </StackPanel>
+                            <ListBox x:Name="FolderList" Classes="folders"
+                                     ItemsSource="{Binding Folders.VisibleFolders}"
+                                     SelectedItem="{Binding Folders.SelectedFolder}"
+                                     DoubleTapped="OnFolderDoubleTapped">
+                                <ListBox.ContextMenu>
+                                    <ContextMenu>
+                                        <!-- FModel's Export Folder: the folder and its subfolders -->
+                                        <MenuItem Header="Export Folder">
+                                            <MenuItem.Icon><c:Glyph Data="{StaticResource ExportIcon}" /></MenuItem.Icon>
+                                            <MenuItem x:Name="FolderExportDataItem" Header="Raw Data (.uasset)" Tag="RawData" Click="OnExportFolderClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource AssetIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="FolderExportPropertiesItem" Header="Properties (.json)" Tag="Properties" Click="OnExportFolderClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource JsonIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="FolderExportTexturesItem" Header="Textures" Tag="Textures" Click="OnExportFolderClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource TextureIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="FolderExportCodeItem" Header="Decompiled Blueprints" Tag="Code" Click="OnExportFolderClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource CodeIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="FolderExportModelsItem" Header="Models" Tag="Models" Click="OnExportFolderClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource ModelIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="FolderExportWorldsItem" Header="Worlds" Tag="Worlds" Click="OnExportFolderClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource WorldIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="FolderExportAnimationsItem" Header="Animations" Tag="Animations" Click="OnExportFolderClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource AnimationIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="FolderExportAudioItem" Header="Audio" Tag="Audio" Click="OnExportFolderClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource AudioIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                        </MenuItem>
+                                        <Separator />
+                                        <MenuItem Header="Favorite Directory" Click="OnFavoriteFolderClick">
+                                            <MenuItem.Icon><c:Glyph Data="{StaticResource DirectoriesAddIcon}" /></MenuItem.Icon>
+                                        </MenuItem>
+                                        <MenuItem Header="Copy Directory Path" Click="OnCopyFolderPathClick">
+                                            <MenuItem.Icon><c:Glyph Data="{StaticResource CopyIcon}" /></MenuItem.Icon>
+                                        </MenuItem>
+                                    </ContextMenu>
+                                </ListBox.ContextMenu>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:FolderNode">
+                                        <Grid ColumnDefinitions="Auto,Auto,*" Margin="{Binding Indent}" Background="Transparent"
+                                              ToolTip.Tip="{Binding Tooltip}">
+                                            <Button Classes="toolbar" Width="20" Height="20" Padding="0" Focusable="False"
+                                                    Opacity="{Binding HasSubFolders, Converter={x:Static local:Converters.VisibleOpacity}}"
+                                                    IsHitTestVisible="{Binding HasSubFolders}"
+                                                    Command="{Binding $parent[ListBox].((vm:MainViewModel)DataContext).ToggleFolderCommand}"
+                                                    CommandParameter="{Binding}">
+                                                <c:Glyph Classes="arrow" Classes.expanded="{Binding IsExpanded}" Data="{StaticResource ArrowIcon}" />
+                                            </Button>
+                                            <StackPanel Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,3">
+                                                <Panel Width="16" Height="16" Margin="0,0,3.5,0" VerticalAlignment="Center">
+                                                    <Image Source="{Binding CustomIcon}" Width="16" Height="16" IsVisible="{Binding HasCustomIcon}" />
+                                                    <Image Source="{StaticResource TreeFolderClosedImage}" Width="16" Height="14"
+                                                           IsVisible="{Binding ShowClosedFolder}" />
+                                                    <Image Source="{StaticResource TreeFolderOpenImage}" Width="16" Height="14"
+                                                           IsVisible="{Binding ShowOpenFolder}" />
+                                                </Panel>
+                                                <Border CornerRadius="5" Height="10" MinWidth="10" Background="{StaticResource TreeBadgeBrush}"
+                                                        Margin="-10.5,0,4.5,0" VerticalAlignment="Bottom" IsVisible="{Binding HasPackages}">
+                                                    <TextBlock Text="{Binding PackageCount}" FontSize="7" Foreground="White" Margin="2.5,0"
+                                                               VerticalAlignment="Center" HorizontalAlignment="Center" />
+                                                </Border>
+                                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </DockPanel>
+                    </TabItem>
+
+                    <!-- Packages -->
+                    <TabItem Header="{Binding PackagesHeader}">
+                        <DockPanel Margin="8,8,8,0">
+                            <c:SearchTextBox DockPanel.Dock="Top" Text="{Binding PackageSearchText}" />
+                            <c:Breadcrumb x:Name="PackagesBreadcrumb" DockPanel.Dock="Top" HorizontalAlignment="Left" Margin="0,5"
+                                          Path="{Binding SelectedFolder.FullPath, FallbackValue='No/Directory/Detected/In/Folder'}" />
+                            <StackPanel DockPanel.Dock="Bottom" Margin="0,0,0,5">
+                                <c:SectionSeparator Text="INFORMATION" />
+                                <Grid Classes="info" ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto">
+                                    <TextBlock Text="{Binding SelectedPackage.OffsetText, FallbackValue='0x0'}" />
+                                    <TextBlock Grid.Column="1" Text="Offset" />
+                                    <TextBlock Grid.Row="1" Text="{Binding SelectedPackage.SizeText, FallbackValue='0 B'}" />
+                                    <TextBlock Grid.Row="1" Grid.Column="1" Text="Size" />
+                                    <TextBlock Grid.Row="2" Text="{Binding SelectedPackage.CompressionText, FallbackValue='Unknown'}" />
+                                    <TextBlock Grid.Row="2" Grid.Column="1" Text="Compression Method" />
+                                    <TextBlock Grid.Row="3" Text="{Binding SelectedPackage.IsEncrypted, FallbackValue='False'}" />
+                                    <TextBlock Grid.Row="3" Grid.Column="1" Text="Is Encrypted" />
+                                    <TextBlock Grid.Row="4" Text="{Binding SelectedPackage.ArchiveText, FallbackValue='None'}" />
+                                    <TextBlock Grid.Row="4" Grid.Column="1" Text="Included In Archive" />
+                                </Grid>
+                            </StackPanel>
+                            <ListBox x:Name="PackagesList" ItemsSource="{Binding Packages}" SelectedItem="{Binding SelectedPackage}"
+                                     SelectionMode="Multiple" DoubleTapped="OnPackageDoubleTapped">
+                                <ListBox.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Extract in New Tab" Click="OnExtractNewTabClick">
+                                            <MenuItem.Icon><c:Glyph Data="{StaticResource ExtractIcon}" /></MenuItem.Icon>
+                                        </MenuItem>
+                                        <MenuItem Header="Show Metadata" Click="OnShowMetadataClick"
+                                                  IsEnabled="{Binding SelectedPackage.IsPackage, FallbackValue=False}">
+                                            <MenuItem.Icon><c:Glyph Data="{StaticResource InfoIcon}" /></MenuItem.Icon>
+                                        </MenuItem>
+                                        <MenuItem Header="Find References" Click="OnFindReferencesClick"
+                                                  IsEnabled="{Binding SelectedPackage.IsPackage, FallbackValue=False}">
+                                            <MenuItem.Icon><c:Glyph Data="{StaticResource SearchIcon}" /></MenuItem.Icon>
+                                        </MenuItem>
+                                        <MenuItem Header="Decompile Blueprint" Click="OnDecompileClick"
+                                                  IsEnabled="{Binding SelectedPackage.IsPackage, FallbackValue=False}">
+                                            <MenuItem.Icon><c:Glyph Data="{StaticResource BlueprintIcon}" /></MenuItem.Icon>
+                                        </MenuItem>
+                                        <Separator />
+                                        <MenuItem Header="Export">
+                                            <MenuItem.Icon><c:Glyph Data="{StaticResource ExportIcon}" /></MenuItem.Icon>
+                                            <MenuItem x:Name="ExportDataItem" Header="Raw Data (.uasset)" Command="{Binding ExportRawDataCommand}"
+                                                      CommandParameter="{Binding #PackagesList.SelectedItems}">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource AssetIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="ExportPropertiesItem" Header="Properties (.json)" Command="{Binding ExportPropertiesCommand}"
+                                                      CommandParameter="{Binding #PackagesList.SelectedItems}">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource JsonIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="ExportTexturesItem" Header="Texture" Command="{Binding ExportTextureCommand}"
+                                                      CommandParameter="{Binding #PackagesList.SelectedItems}">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource TextureIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="ExportModelsItem" Header="Model" Command="{Binding ExportModelCommand}"
+                                                      CommandParameter="{Binding #PackagesList.SelectedItems}">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource ModelIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="ExportWorldsItem" Header="World" Command="{Binding ExportWorldCommand}"
+                                                      CommandParameter="{Binding #PackagesList.SelectedItems}">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource WorldIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="ExportAnimationsItem" Header="Animation" Command="{Binding ExportAnimationCommand}"
+                                                      CommandParameter="{Binding #PackagesList.SelectedItems}">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource AnimationIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="ExportAudioItem" Header="Audio" Command="{Binding ExportAudioCommand}"
+                                                      CommandParameter="{Binding #PackagesList.SelectedItems}">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource AudioIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="ExportCodeItem" Header="Decompiled Blueprints (.cpp)" Command="{Binding ExportCodeCommand}"
+                                                      CommandParameter="{Binding #PackagesList.SelectedItems}">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource CodeIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                        </MenuItem>
+                                        <MenuItem Header="Copy">
+                                            <MenuItem.Icon><c:Glyph Data="{StaticResource CopyIcon}" /></MenuItem.Icon>
+                                            <MenuItem Header="Package Path" Command="{Binding CopyCommand}" CommandParameter="PackagePath" />
+                                            <MenuItem Header="Package Name" Command="{Binding CopyCommand}" CommandParameter="PackageName" />
+                                            <MenuItem Header="Directory Path" Command="{Binding CopyCommand}" CommandParameter="DirectoryPath" />
+                                            <MenuItem Header="Package Path w/o Extension" Command="{Binding CopyCommand}" CommandParameter="PathNoExtension" />
+                                            <MenuItem Header="Package Name w/o Extension" Command="{Binding CopyCommand}" CommandParameter="NameNoExtension" />
+                                        </MenuItem>
+                                    </ContextMenu>
+                                </ListBox.ContextMenu>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:AssetItem">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Image Source="{Binding Icon}" Width="16" Height="16" Margin="0,0,3,0" />
+                                            <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </DockPanel>
+                    </TabItem>
+                </TabControl>
+            </Panel>
+
+            <GridSplitter Grid.Column="1" ResizeDirection="Columns" />
+
+            <!-- ===== Right panel: asset tabs + console ===== -->
+            <Border Grid.Column="2" Background="{StaticResource Layer2BackgroundBrush}">
+                <Grid RowDefinitions="*,Auto" Margin="0,0,3,0">
+
+                    <Panel>
+                    <!-- FModel's new asset explorer, in place of the tabs -->
+                    <v:AssetExplorer x:Name="ExplorerView" IsVisible="{Binding IsExplorerVisible}" />
+
+                    <Grid RowDefinitions="Auto,4,*" IsVisible="{Binding !IsExplorerVisible}">
+                        <!-- Tab headers (GameFilesTabControl) -->
+                        <Grid ColumnDefinitions="*,Auto">
+                            <ListBox x:Name="TabsHeader" Classes="assettabs" ItemsSource="{Binding Tabs}"
+                                     SelectedItem="{Binding SelectedTab}" PointerReleased="OnTabsHeaderPointerReleased">
+                                <ListBox.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel />
+                                    </ItemsPanelTemplate>
+                                </ListBox.ItemsPanel>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:AssetTab">
+                                        <DockPanel Width="180" ToolTip.Tip="{Binding Header}" Background="Transparent">
+                                            <DockPanel.ContextMenu>
+                                                <ContextMenu>
+                                                    <MenuItem Header="Close Tab" Click="OnCloseTabClick">
+                                                        <MenuItem.Icon><c:Glyph Data="{StaticResource RemoveIcon}" /></MenuItem.Icon>
+                                                    </MenuItem>
+                                                    <MenuItem Header="Close All Tabs" Click="OnCloseAllTabsClick">
+                                                        <MenuItem.Icon><c:Glyph Data="{StaticResource RemoveIcon}" /></MenuItem.Icon>
+                                                    </MenuItem>
+                                                    <MenuItem Header="Close Other Tabs" Click="OnCloseOtherTabsClick">
+                                                        <MenuItem.Icon><c:Glyph Data="{StaticResource RemoveIcon}" /></MenuItem.Icon>
+                                                    </MenuItem>
+                                                    <Separator />
+                                                    <MenuItem Header="Save Text…" Click="OnTabSaveTextClick">
+                                                        <MenuItem.Icon><c:Glyph Data="{StaticResource SaveIcon}" /></MenuItem.Icon>
+                                                    </MenuItem>
+                                                    <MenuItem Header="Show Metadata" Click="OnTabShowMetadataClick"
+                                                              IsEnabled="{Binding Entry.IsUePackage, FallbackValue=False}">
+                                                        <MenuItem.Icon><c:Glyph Data="{StaticResource InfoIcon}" /></MenuItem.Icon>
+                                                    </MenuItem>
+                                                    <MenuItem Header="Find References" Click="OnTabFindReferencesClick"
+                                                              IsEnabled="{Binding Entry.IsUePackage, FallbackValue=False}">
+                                                        <MenuItem.Icon><c:Glyph Data="{StaticResource SearchIcon}" /></MenuItem.Icon>
+                                                    </MenuItem>
+                                                    <MenuItem Header="Decompile Blueprint" Click="OnTabDecompileClick"
+                                                              IsEnabled="{Binding Entry.IsUePackage, FallbackValue=False}">
+                                                        <MenuItem.Icon><c:Glyph Data="{StaticResource BlueprintIcon}" /></MenuItem.Icon>
+                                                    </MenuItem>
+                                                </ContextMenu>
+                                            </DockPanel.ContextMenu>
+                                            <Button DockPanel.Dock="Right" Classes="tabclose" Margin="10,0,0,0" ToolTip.Tip="Close Tab"
+                                                    Command="{Binding $parent[ListBox].((vm:MainViewModel)DataContext).CloseTabCommand}"
+                                                    CommandParameter="{Binding}" />
+                                            <TextBlock Text="{Binding Header}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                        </DockPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <Button Grid.Column="1" Classes="toolbar" Width="30" VerticalAlignment="Bottom" ToolTip.Tip="Add New Tab"
+                                    Background="{StaticResource Layer3BackgroundBrush}" Command="{Binding AddTabCommand}">
+                                <c:Glyph Data="{StaticResource AddIcon}" />
+                            </Button>
+                        </Grid>
+                        <Border Grid.Row="1" Background="{StaticResource Layer2HighlightBrush}" />
+
+                        <!-- Tab content: properties editor + image preview -->
+                        <Grid x:Name="TabContent" Grid.Row="2" ColumnDefinitions="*,Auto,0"
+                              Background="{StaticResource Layer3BackgroundBrush}">
+                            <ae:TextEditor x:Name="Editor" Grid.Column="0"
+                                           Document="{Binding SelectedTab.Document}"
+                                           SyntaxHighlighting="{Binding SelectedTab.Highlighting}"
+                                           IsReadOnly="True" ShowLineNumbers="True" FontFamily="Menlo, Consolas, monospace" FontSize="12"
+                                           Foreground="{StaticResource EditorForegroundBrush}"
+                                           LineNumbersForeground="#6E7381"
+                                           Background="{StaticResource Layer3BackgroundBrush}"
+                                           HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" />
+                            <GridSplitter x:Name="ImageSplitter" Grid.Column="1" Width="4" ResizeDirection="Columns"
+                                          Background="{StaticResource Layer3BackgroundBrush}"
+                                          IsVisible="{Binding SelectedTab.HasImage, FallbackValue=False}" />
+                            <Panel x:Name="ImagePanel" Grid.Column="2" IsVisible="{Binding SelectedTab.HasImage, FallbackValue=False}"
+                                   Focusable="True" Background="Transparent" KeyDown="OnImageKeyDown" PointerPressed="OnImagePointerPressed">
+                                <Border BorderBrush="#3b3d4a" BorderThickness="1" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <Image x:Name="TabImage" Source="{Binding SelectedTab.Image}" Stretch="Uniform"
+                                           RenderOptions.BitmapInterpolationMode="HighQuality">
+                                        <Image.ContextMenu>
+                                            <ContextMenu>
+                                                <MenuItem Header="Open Image" Command="{Binding OpenImageCommand}">
+                                                    <MenuItem.Icon><c:Glyph Data="{StaticResource MagnifierIcon}" /></MenuItem.Icon>
+                                                </MenuItem>
+                                                <MenuItem Header="Save Image" Click="OnSaveImageClick">
+                                                    <MenuItem.Icon><c:Glyph Data="{StaticResource SaveIcon}" /></MenuItem.Icon>
+                                                </MenuItem>
+                                                <MenuItem Header="Add to Image Merger" Command="{Binding AddImageToMergerCommand}">
+                                                    <MenuItem.Icon><c:Glyph Data="{StaticResource ImageMergerIcon}" /></MenuItem.Icon>
+                                                </MenuItem>
+                                            </ContextMenu>
+                                        </Image.ContextMenu>
+                                    </Image>
+                                </Border>
+                                <!-- FModel's image pager: previous / next with ← →, and "n / total" -->
+                                <Button Classes="toolbar imagePager" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="4,0,0,0"
+                                        ToolTip.Tip="Previous image (←)" Click="OnPreviousImageClick"
+                                        IsVisible="{Binding SelectedTab.HasMultipleImages, FallbackValue=False}">
+                                    <c:Glyph Data="{StaticResource SkipPreviousIcon}" />
+                                </Button>
+                                <Button Classes="toolbar imagePager" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,4,0"
+                                        ToolTip.Tip="Next image (→)" Click="OnNextImageClick"
+                                        IsVisible="{Binding SelectedTab.HasMultipleImages, FallbackValue=False}">
+                                    <c:Glyph Data="{StaticResource SkipNextIcon}" />
+                                </Button>
+                                <StackPanel VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="0,0,0,4">
+                                    <TextBlock HorizontalAlignment="Center" FontSize="10" FontWeight="SemiBold" Text="{Binding SelectedTab.ImageName}" />
+                                    <TextBlock HorizontalAlignment="Center" FontSize="10" Classes="dim" Text="{Binding SelectedTab.ImagePage}"
+                                               IsVisible="{Binding SelectedTab.HasMultipleImages, FallbackValue=False}" />
+                                </StackPanel>
+                            </Panel>
+                        </Grid>
+                    </Grid>
+
+                    <!-- FModel's floating switches: explorer / tabs, and texture thumbnails -->
+                    <Border Classes="floating" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="12,12,24,12"
+                            Background="{StaticResource Layer2BackgroundBrush}" CornerRadius="8" Padding="4"
+                            IsVisible="{Binding NewAssetExplorer}">
+                        <StackPanel Orientation="Horizontal" Spacing="2">
+                            <ToggleButton x:Name="ExplorerToggle" Classes="floating explorer" Width="32" Height="32" Padding="0"
+                                          IsChecked="{Binding IsExplorerVisible}">
+                                <c:Glyph Data="{StaticResource FolderIconAlt}" />
+                            </ToggleButton>
+                            <ToggleButton Classes="floating textures" Width="32" Height="32" Padding="0"
+                                          IsChecked="{Binding Explorer.PreviewTextures}"
+                                          ToolTip.Tip="Preview Textures in the explorer">
+                                <c:Glyph Data="{StaticResource TextureIconAlt}" />
+                            </ToggleButton>
+                        </StackPanel>
+                    </Border>
+                    </Panel>
+
+                    <!-- Console (FModel's logger Expander) -->
+                    <DockPanel Grid.Row="1" Margin="0,5">
+                        <ToggleButton DockPanel.Dock="Top" Classes="expander" IsChecked="{Binding IsLoggerExpanded}"
+                                      Margin="{Binding IsLoggerExpanded, Converter={x:Static local:Converters.ExpanderHeaderMargin}}">
+                            <c:Glyph Data="{StaticResource ExpanderIcon}" />
+                        </ToggleButton>
+                        <Grid Height="175" IsVisible="{Binding IsLoggerExpanded}" ColumnDefinitions="*,2,24">
+                            <Border Grid.ColumnSpan="3" Background="{StaticResource Layer3BackgroundBrush}"
+                                    BorderBrush="{StaticResource Layer3BorderBrush}" BorderThickness="1">
+                                <ScrollViewer x:Name="LogScroll" Padding="4,2,28,2">
+                                    <ItemsControl ItemsSource="{Binding Logs}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:LogEntry">
+                                                <SelectableTextBlock FontFamily="Menlo, Consolas, monospace" FontSize="11" TextWrapping="Wrap">
+                                                    <Run Text="{Binding Prefix}" Foreground="{Binding PrefixBrush}" />
+                                                    <Run Text="{Binding Message}" Foreground="{Binding MessageBrush}" />
+                                                </SelectableTextBlock>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </Border>
+                            <StackPanel Grid.Column="2" VerticalAlignment="Bottom" Margin="-5,-5,5,5">
+                                <Button Classes="toolbar" ToolTip.Tip="Open Output Folder" Padding="0,4" HorizontalAlignment="Stretch"
+                                        Command="{Binding OpenOutputFolderCommand}">
+                                    <c:Glyph Data="{StaticResource FolderIcon}" />
+                                </Button>
+                                <Button Classes="toolbar" ToolTip.Tip="Clear Logs" Padding="0,4" HorizontalAlignment="Stretch"
+                                        Command="{Binding ClearLogsCommand}">
+                                    <c:Glyph Data="{StaticResource TrashIcon}" />
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+                    </DockPanel>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- ============ Status bar ============ -->
+        <Border Grid.Row="3" Height="28" Background="{Binding StatusKind, Converter={x:Static local:Converters.StatusBrush}}">
+            <Grid ColumnDefinitions="*,Auto" Margin="5,0">
+                <TextBlock Text="{Binding StatusText}" Foreground="White" VerticalAlignment="Center" Margin="5,0,0,0" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,5,0">
+                    <c:Glyph Data="{StaticResource StatusBarIcon}" Foreground="White" />
+                    <TextBlock Margin="10,0,0,0" Foreground="White" Text="{Binding StatusExtra}" VerticalAlignment="Center" />
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

@@ -1,0 +1,109 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:c="using:FModel.Controls"
+        xmlns:vm="using:FModel.ViewModels"
+        xmlns:audio="using:FModel.Services.Audio"
+        x:Class="FModel.Views.AudioPlayerWindow"
+        x:DataType="vm:AudioPlayerViewModel"
+        Title="Audio Player"
+        Width="1050" Height="560" MinWidth="700" MinHeight="360"
+        Background="{StaticResource Layer0BackgroundBrush}">
+    <Grid ColumnDefinitions="350,*">
+        <!-- Device, volume, sound info and the playlist -->
+        <Border Background="{StaticResource Layer1BackgroundBrush}" Padding="10">
+            <DockPanel>
+                <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,10,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto">
+                    <TextBlock Text="Devices" VerticalAlignment="Center" Margin="0,0,0,10" />
+                    <ComboBox Grid.Column="2" HorizontalAlignment="Stretch" Margin="0,0,0,10"
+                              ItemsSource="{Binding Devices}" SelectedItem="{Binding SelectedDevice}">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="audio:AudioDevice">
+                                <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <TextBlock Grid.Row="1" Text="Volume" VerticalAlignment="Center" Margin="0,0,0,10" />
+                    <Slider Grid.Row="1" Grid.Column="2" Minimum="0" Maximum="100" Value="{Binding Volume}"
+                            Margin="0,-8,0,2" ToolTip.Tip="{Binding Volume, StringFormat='{}{0:0}%'}" />
+                    <TextBlock Grid.Row="2" Text="Encoding" VerticalAlignment="Center" Margin="0,0,0,10" />
+                    <TextBlock Grid.Row="2" Grid.Column="2" Text="{Binding Encoding}" HorizontalAlignment="Right"
+                               TextTrimming="CharacterEllipsis" Margin="0,0,0,10" />
+                    <TextBlock Grid.Row="3" Text="Length" VerticalAlignment="Center" Margin="0,0,0,10" />
+                    <TextBlock Grid.Row="3" Grid.Column="2" Text="{Binding Length}" HorizontalAlignment="Right" Margin="0,0,0,10" />
+                    <TextBlock Grid.Row="4" Text="Bytes Per Second" VerticalAlignment="Center" />
+                    <TextBlock Grid.Row="4" Grid.Column="2" Text="{Binding BytesPerSecond}" HorizontalAlignment="Right" />
+                </Grid>
+                <c:SectionSeparator DockPanel.Dock="Top" Text="PLAYLIST" Margin="0,10,0,6" />
+                <c:SearchTextBox DockPanel.Dock="Top" Watermark="Search by name..." Text="{Binding Filter, Mode=TwoWay}" Margin="0,0,0,5" />
+                <ListBox x:Name="Playlist" ItemsSource="{Binding VisibleTracks}" SelectedItem="{Binding SelectedTrack}"
+                         Background="Transparent" DoubleTapped="OnTrackDoubleTapped">
+                    <ListBox.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="Play" Command="{Binding PlaySelectedCommand}">
+                                <MenuItem.Icon><c:Glyph Data="{StaticResource PlayIcon}" /></MenuItem.Icon>
+                            </MenuItem>
+                            <MenuItem Header="Remove" Command="{Binding RemoveCommand}">
+                                <MenuItem.Icon><c:Glyph Data="{StaticResource RemoveIcon}" /></MenuItem.Icon>
+                            </MenuItem>
+                            <MenuItem Header="Save" Command="{Binding SaveCommand}">
+                                <MenuItem.Icon><c:Glyph Data="{StaticResource SaveIcon}" /></MenuItem.Icon>
+                            </MenuItem>
+                            <MenuItem Header="Save Playlist" Command="{Binding SavePlaylistCommand}">
+                                <MenuItem.Icon><c:Glyph Data="{StaticResource SavePlaylistIcon}" /></MenuItem.Icon>
+                            </MenuItem>
+                            <Separator />
+                            <MenuItem Header="Add Audio Files…" Click="OnAddFilesClick">
+                                <MenuItem.Icon><c:Glyph Data="{StaticResource AudioIcon}" /></MenuItem.Icon>
+                            </MenuItem>
+                        </ContextMenu>
+                    </ListBox.ContextMenu>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:AudioTrack">
+                            <DockPanel ToolTip.Tip="{Binding ToolTip}">
+                                <c:Glyph DockPanel.Dock="Left" Data="{StaticResource AudioIcon}" Margin="0,0,6,0"
+                                         Opacity="{Binding IsCurrent, Converter={x:Static c:AudioVisualConverters.CurrentOpacity}}" />
+                                <TextBlock DockPanel.Dock="Right" Text="{Binding Details}" Classes="dim" FontSize="11"
+                                           VerticalAlignment="Center" Margin="6,0,0,0" />
+                                <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                                           FontWeight="{Binding IsCurrent, Converter={x:Static c:AudioVisualConverters.CurrentWeight}}" />
+                            </DockPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </DockPanel>
+        </Border>
+
+        <!-- Time, transport, spectrum and timeline -->
+        <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto,Auto">
+            <StackPanel HorizontalAlignment="Right" Margin="0,15,15,0">
+                <TextBlock x:Name="ClockLabel" Foreground="#E5C07B" FontSize="12" HorizontalAlignment="Right"
+                           Text="{Binding Current.Name, FallbackValue=''}" TextTrimming="CharacterEllipsis" MaxWidth="500" />
+                <TextBlock x:Name="ClockTime" Foreground="#DAE5F2" FontSize="16" FontFamily="Menlo"
+                           HorizontalAlignment="Right" Text="00:00:00.00" />
+            </StackPanel>
+            <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="15,15,0,0" Spacing="2">
+                <Button Classes="toolbar" ToolTip.Tip="Previous" Command="{Binding PreviousCommand}">
+                    <c:Glyph Data="{StaticResource SkipPreviousIcon}" Width="20" Height="20" />
+                </Button>
+                <Button Classes="toolbar" ToolTip.Tip="Play / Pause (Space)" Command="{Binding PlayPauseCommand}">
+                    <Panel>
+                        <c:Glyph Data="{StaticResource PlayIcon}" Width="20" Height="20" IsVisible="{Binding !IsPlaying}" />
+                        <c:Glyph Data="{StaticResource PauseIcon}" Width="20" Height="20" IsVisible="{Binding IsPlaying}" />
+                    </Panel>
+                </Button>
+                <Button Classes="toolbar" ToolTip.Tip="Next" Command="{Binding NextCommand}">
+                    <c:Glyph Data="{StaticResource SkipNextIcon}" Width="20" Height="20" />
+                </Button>
+            </StackPanel>
+            <c:AudioSpectrum x:Name="Spectrum" Grid.Row="1" Player="{Binding}" Margin="15,10,15,6" />
+            <TextBlock Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center" Classes="dim" TextWrapping="Wrap"
+                       MaxWidth="460" TextAlignment="Center" Text="{Binding Status}" />
+            <TextBlock Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center" Classes="dim" TextAlignment="Center"
+                       IsVisible="{Binding !Tracks.Count}"
+                       Text="Extract a sound wave, Wwise or FMOD event, sound bank or audio file to play it here" />
+            <c:AudioTimeline x:Name="Timeline" Grid.Row="2" Player="{Binding}" Height="60" Margin="0,0,0,0" />
+            <TextBlock Grid.Row="3" Classes="dim" FontSize="11" Margin="15,4,15,6"
+                       Text="Space: play/pause · Cmd+Left / Cmd+Right: previous/next · Delete: remove · click or drag the timeline to seek" />
+        </Grid>
+    </Grid>
+</Window>

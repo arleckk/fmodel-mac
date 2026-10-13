@@ -1,0 +1,18 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="using:FModel.Controls"
+             x:Class="FModel.Controls.SearchTextBox"
+             x:Name="Root">
+    <!-- FModel's SearchTextBox: magnifier on the left, clear button on the right -->
+    <Grid ColumnDefinitions="*,Auto">
+        <TextBox Grid.ColumnSpan="2" x:Name="Input" Padding="25,3,30,3"
+                 Text="{Binding #Root.Text, Mode=TwoWay}"
+                 Watermark="{Binding #Root.Watermark}" />
+        <c:Glyph Data="{StaticResource SearchIcon}" HorizontalAlignment="Left"
+                  Margin="5,0,0,0" IsHitTestVisible="False" />
+        <Button Grid.Column="1" Classes="toolbar" ToolTip.Tip="Clear Search Filter" Margin="0,0,2,0"
+                Click="OnClearClick" Focusable="False">
+            <c:Glyph Data="{StaticResource BackspaceIcon}" />
+        </Button>
+    </Grid>
+</UserControl>
