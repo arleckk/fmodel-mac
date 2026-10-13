@@ -52,6 +52,7 @@ Optional components built by app/packaging and bundled inside FModel.app (not in
   with portions Copyright (c) 2014 Thomas Klaeger. MIT License. Compiled with GraalVM Native Image
   (its runtime is GPL-2.0 with the Classpath Exception).
 
-Web services the app can reach, when the user uses those features: uedb.dev (AES keys and mappings
-presets) and FModel's backup service (export-service-new.dillyapis.com). The app identifies itself
-to them as "FModel-macOS".
+Web services the app can reach: GitHub's API (api.github.com), at launch, to check this project's releases for
+updates (Help › Releases › Remind Me › Never turns it off), and, when the user uses those features, uedb.dev (AES
+keys and mappings presets) and FModel's backup service (export-service-new.dillyapis.com). The app identifies
+itself to them as "FModel-macOS".

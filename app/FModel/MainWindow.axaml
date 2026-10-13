@@ -138,7 +138,7 @@
                 <MenuItem Header="Donate to FModel" Command="{Binding OpenUrlCommand}" CommandParameter="{x:Static vm:MainViewModel.DonateLink}">
                     <MenuItem.Icon><c:Glyph Data="{StaticResource GiftIcon}" /></MenuItem.Icon>
                 </MenuItem>
-                <MenuItem Header="Releases" Command="{Binding OpenUrlCommand}" CommandParameter="{x:Static vm:MainViewModel.ReleasesLink}">
+                <MenuItem Header="Releases" Click="OnReleasesClick">
                     <MenuItem.Icon><c:Glyph Data="{StaticResource GitHubIcon}" /></MenuItem.Icon>
                 </MenuItem>
                 <MenuItem Header="Bugs Report" Command="{Binding OpenUrlCommand}" CommandParameter="{x:Static vm:MainViewModel.IssueLink}">
@@ -697,8 +697,17 @@
         <Border Grid.Row="3" Height="28" Background="{Binding StatusKind, Converter={x:Static local:Converters.StatusBrush}}">
             <Grid ColumnDefinitions="*,Auto" Margin="5,0">
                 <TextBlock Text="{Binding StatusText}" Foreground="White" VerticalAlignment="Center" Margin="5,0,0,0" />
-                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,5,0">
-                    <c:Glyph Data="{StaticResource StatusBarIcon}" Foreground="White" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Stretch" Margin="0,0,5,0">
+                    <!-- FModel's "Update Available" status bar button -->
+                    <Button Classes="statusbar" Background="{StaticResource AdonisAlertBrush}" Margin="0,0,10,0"
+                            IsVisible="{Binding IsUpdateAvailable}" Click="OnReleasesClick"
+                            ToolTip.Tip="A new version of FModel for macOS is available. Click to view it.">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <c:Glyph Data="{StaticResource UpdateIcon}" Foreground="White" />
+                            <TextBlock Margin="10,0,0,0" Text="Update Available" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <c:Glyph Data="{StaticResource StatusBarIcon}" Foreground="White" VerticalAlignment="Center" />
                     <TextBlock Margin="10,0,0,0" Foreground="White" Text="{Binding StatusExtra}" VerticalAlignment="Center" />
                 </StackPanel>
             </Grid>

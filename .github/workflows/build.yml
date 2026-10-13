@@ -90,6 +90,12 @@ jobs:
           dotnet $bin/FModel.dll export "${game[@]}" --kind textures -o "$RUNNER_TEMP/cli-out" /Game/Fixtures/Textures
           dotnet $bin/FModel.Snapshot.dll --mcp-test "$RUNNER_TEMP/mcp" "$fixtures" GAME_UE5_8 "$fixtures/Mappings/CUE4ParseFixtures-Oodle.usmap"
 
+      - name: Update check
+        run: |
+          fixtures="$PWD/upstream/CUE4Parse/CUE4Parse.Tests/Fixtures/UE5_8"
+          FMODEL_USMAP="$fixtures/Mappings/CUE4ParseFixtures-Oodle.usmap" \
+            dotnet app/FModel.Snapshot/bin/Debug/net10.0/FModel.Snapshot.dll --updates "$RUNNER_TEMP/updates" "$fixtures" GAME_UE5_8 < /dev/null
+
       - name: Upload regression screenshots
         if: always()
         uses: actions/upload-artifact@v7

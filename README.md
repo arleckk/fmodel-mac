@@ -55,6 +55,13 @@ FModel isn't notarized by Apple (that takes a paid developer account), so macOS 
 From then on it opens normally, and so does the `fmodel` command line. If you prefer the Terminal, this does the
 same: `xattr -dr com.apple.quarantine /Applications/FModel.app`.
 
+### Updates
+
+Like FModel, the app looks for a newer release at launch (on GitHub, this repository's releases) and shows an
+**Update Available** button when there is one. **Help › Releases** lists every release; its **Remind Me** button
+silences the check for a few days, a week, a month, or for good. After an update, the first launch shows the new
+release's notes in a tab.
+
 ## Requirements to build
 
 - A Mac with Apple Silicon (arm64) and macOS 14 or later.

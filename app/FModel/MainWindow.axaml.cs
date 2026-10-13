@@ -90,6 +90,10 @@ public partial class MainWindow : Window
         base.OnOpened(e);
         if (_vm is null) return;
 
+        // FModel checks for updates at launch, alongside mounting the game
+        _vm.UpdateFound += _ => ShowReleases(updateFound: true);
+        _ = _vm.CheckForUpdatesAtLaunchAsync();
+
         // Like FModel's first run: ask for a game when none is configured yet
         if (_vm.HasGameDirectory) await _vm.InitializeGameAsync();
         else await ShowDirectorySelectorAsync();
@@ -468,6 +472,24 @@ public partial class MainWindow : Window
 
     private async void OnAboutClick(object? sender, RoutedEventArgs e) =>
         await new AboutWindow(Vm.Version).ShowDialog(this);
+
+    // FModel's Help › Releases (UpdateView), also opened by the status bar's Update Available and the launch check
+    private ReleasesWindow? _releases;
+
+    private void OnReleasesClick(object? sender, RoutedEventArgs e) => ShowReleases();
+
+    public ReleasesWindow ShowReleases(bool updateFound = false)
+    {
+        if (_releases is { } open)
+        {
+            open.Activate();
+            return open;
+        }
+        _releases = new ReleasesWindow(Vm, updateFound);
+        _releases.Closed += (_, _) => _releases = null;
+        _releases.Show(this);
+        return _releases;
+    }
 
     // ---------- Archives ----------
 

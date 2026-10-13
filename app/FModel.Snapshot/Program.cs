@@ -25,6 +25,8 @@ using FModel.Views;
 
 // Exporter logs feed the Export Session's per-asset logs, like in the app
 Serilog.Log.Logger = new Serilog.LoggerConfiguration().WithExportLogs(Serilog.Events.LogEventLevel.Warning).CreateLogger();
+// No update check at launch: the harness and CI stay offline and deterministic (--updates tests it on its own)
+Environment.SetEnvironmentVariable("FMODEL_NO_UPDATES", "1");
 
 if (args is ["--export", var paks, var gameVersion, var aesKey, var exportOut, ..])
 {
@@ -514,6 +516,104 @@ if (args is ["--unluac", .. var chunkFiles])
         foreach (var line in (result.Text ?? "").Split('\n').Take(lines)) Console.WriteLine($"  | {line}");
     }
     return;
+}
+
+// "--updates <outdir> <paks> <EGame> [live]" checks the update logic on a sample of GitHub's release list (versions,
+// drafts and pre-releases left out, Remind Me dates), then shows it: the status bar's Update Available, the Releases
+// window and the release notes tab. "live" also lists the real releases from GitHub (needs network).
+if (args is ["--updates", var updOut, var updPaks, var updGame, .. var updRest])
+{
+    updOut = Path.GetFullPath(updOut);
+    if (Directory.Exists(updOut)) Directory.Delete(updOut, true);
+    Directory.CreateDirectory(updOut);
+    Environment.SetEnvironmentVariable("FMODEL_DATA_DIR", Path.Combine(updOut, "data"));
+    new AppSettings { ArchiveDir = updPaks, Game = updGame, UsmapPath = Environment.GetEnvironmentVariable("FMODEL_USMAP") }.Save();
+
+    const string sample = """
+        [
+          { "tag_name": "v0.3.0-beta", "name": "Beta", "draft": false, "prerelease": true, "body": "", "assets": [] },
+          { "tag_name": "v9.9.9", "name": "Draft", "draft": true, "prerelease": false, "body": "", "assets": [] },
+          { "tag_name": "v0.2.0", "name": "FModel for macOS 0.2.0", "draft": false, "prerelease": false,
+            "html_url": "https://github.com/arleckk/fmodel-mac/releases/tag/v0.2.0", "published_at": "2026-11-02T18:00:00Z",
+            "body": "## What's new\r\n\r\n- **Update check:** Help › Releases and an `Update Available` button.\r\n- See [the README](https://github.com/arleckk/fmodel-mac#readme).",
+            "assets": [ { "name": "FModel-v0.2.0-macos-arm64.zip", "size": 76200000,
+                          "browser_download_url": "https://github.com/arleckk/fmodel-mac/releases/download/v0.2.0/FModel-v0.2.0-macos-arm64.zip" } ] },
+          { "tag_name": "nightly", "name": "Nightly", "draft": false, "prerelease": false, "body": "", "assets": [] },
+          { "tag_name": "v0.1.0", "name": "FModel for macOS 0.1.0", "draft": false, "prerelease": false,
+            "html_url": "https://github.com/arleckk/fmodel-mac/releases/tag/v0.1.0", "published_at": "2026-10-13T18:50:00Z",
+            "body": "The first release.", "assets": [] }
+        ]
+        """;
+    var failures = 0;
+    void Expect(string what, bool ok, string detail = "")
+    {
+        if (!ok) failures++;
+        Console.WriteLine($"{(ok ? "ok  " : "FAIL")} {what}{(detail.Length > 0 ? $": {detail}" : "")}");
+    }
+    var parsed = UpdateChecker.Parse(sample);
+    Expect("stable releases only, newest first", string.Join(",", parsed.Select(r => r.Tag)) == "v0.2.0,v0.1.0", string.Join(", ", parsed.Select(r => r.Tag)));
+    Expect("newer than 0.1.0", UpdateChecker.Newer(parsed, new Version(0, 1, 0))?.Tag == "v0.2.0");
+    Expect("nothing newer than 0.2.0", UpdateChecker.Newer(parsed, new Version(0, 2, 0)) is null);
+    Expect("download asset", parsed[0].Download?.Name == "FModel-v0.2.0-macos-arm64.zip" && parsed[1].Download is null);
+    Expect("versions", UpdateChecker.ParseVersion("v1.2.3") == new Version(1, 2, 3) && UpdateChecker.ParseVersion("1.2") == new Version(1, 2, 0) &&
+                       UpdateChecker.ParseVersion("v1.0.0-beta") is null && UpdateChecker.ParseVersion("1.2.3.4") is null);
+    Expect("running version", UpdateChecker.Current == new Version(typeof(MainViewModel).Assembly.GetName().Version!.ToString(3)), UpdateChecker.Current.ToString());
+    var monday = new DateTime(2026, 10, 12, 10, 0, 0);
+    var friday = new DateTime(2026, 10, 16, 10, 0, 0);
+    Expect("remind in 3 days", UpdateChecker.RemindAt("Days", monday) == monday.AddDays(3));
+    Expect("remind next week", UpdateChecker.RemindAt("Week", monday) == new DateTime(2026, 10, 19) && UpdateChecker.RemindAt("Week", friday) == new DateTime(2026, 10, 19));
+    Expect("remind next month", UpdateChecker.RemindAt("Month", new DateTime(2026, 10, 31, 9, 0, 0)) == new DateTime(2026, 11, 1));
+    Expect("remind never / now", UpdateChecker.RemindAt("Never", monday) == DateTime.MaxValue && UpdateChecker.RemindAt(null, monday) == monday);
+
+    if (updRest is ["live"])
+    {
+        var live = UpdateChecker.GetReleasesAsync().GetAwaiter().GetResult();
+        foreach (var release in live)
+            Console.WriteLine($"live: {release.Tag} {release.Published:yyyy-MM-dd} {release.Download?.Name ?? "(no zip)"} {release.Notes.Length} chars of notes");
+        Expect("live releases", live.Any(r => r.Tag == "v0.1.0" && r.Download is not null), $"newer than {UpdateChecker.Current}: {UpdateChecker.Newer(live, UpdateChecker.Current)?.Tag ?? "none"}");
+    }
+
+    RunOnUiThread(SnapshotApp.BuildAvaloniaApp(), async () =>
+    {
+        void Shot(TopLevel top, string name)
+        {
+            Dispatcher.UIThread.RunJobs();
+            AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+            top.CaptureRenderedFrame()?.Save(Path.Combine(updOut, name));
+            Console.WriteLine($"Saved {name}");
+        }
+
+        var vm = new MainViewModel();
+        var window = new MainWindow { DataContext = vm, Width = 1400, Height = 850 };
+        window.Show();
+        for (var i = 0; i < 600 && !(vm.Archives.Count > 0 && vm.IsReady); i++) await Task.Delay(100);
+        Expect("launch check off in the harness, version recorded", vm.Releases.Count == 0 && vm.Settings.LastRunVersion == UpdateChecker.Current.ToString());
+
+        vm.Releases = parsed;
+        vm.AvailableUpdate = UpdateChecker.Newer(parsed, new Version(0, 1, 0));
+        await Task.Delay(200);
+        Shot(window, "update-available.png");
+
+        var releases = window.ShowReleases(updateFound: true);
+        releases.Width = 640;
+        releases.Height = 620;
+        await Task.Delay(300);
+        Shot(releases, "releases.png");
+        Expect("releases window", releases.Title == "A new update is available!");
+
+        vm.RemindMe("Week");
+        Expect("remind me saved", AppSettings.Load().NextUpdateCheck == UpdateChecker.RemindAt("Week", DateTime.Now).Date, vm.NextRefreshText);
+        vm.RemindMe(null);
+        releases.Close();
+
+        vm.ShowReleaseNotes(parsed[0]);
+        await Task.Delay(300);
+        Shot(window, "release-notes.png");
+        Expect("release notes tab", vm.SelectedTab?.Header == "Release Notes: 0.2.0" && vm.SelectedTab.Document.Text.Contains("Update check"));
+        window.Close();
+    }, TimeSpan.FromMinutes(2));
+    Console.WriteLine(failures == 0 ? "Updates: all checks passed" : $"Updates: {failures} check(s) failed");
+    Environment.Exit(failures == 0 ? 0 : 1);
 }
 
 // "--mcp-test <outdir> <paks> <EGame> <usmap> [server executable]" runs FModel's MCP server (FModel.dll mcp, or the given

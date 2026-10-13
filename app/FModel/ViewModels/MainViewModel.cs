@@ -30,9 +30,9 @@ public sealed partial class MainViewModel : ObservableObject, IAnimationSource
 {
     private const int MaxTabs = 20;
 
-    // Releases and bug reports are this port's; donations and the Discord server are the original FModel's
+    // Releases (Help › Releases, from GitHub) and bug reports are this port's; donations and the Discord server are the
+    // original FModel's
     public const string DonateLink = "https://fmodel.app/donate";
-    public const string ReleasesLink = AppSettings.ProjectLink + "/releases";
     public const string IssueLink = AppSettings.ProjectLink + "/issues";
     public const string DiscordLink = "https://fmodel.app/discord";
 
@@ -1514,7 +1514,7 @@ public sealed partial class MainViewModel : ObservableObject, IAnimationSource
     // ---------- Menus ----------
 
     [RelayCommand]
-    private static void OpenUrl(string? url)
+    public static void OpenUrl(string? url)
     {
         if (!string.IsNullOrWhiteSpace(url))
             Process.Start(new ProcessStartInfo("open", [url]) { UseShellExecute = false });

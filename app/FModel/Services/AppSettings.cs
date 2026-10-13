@@ -181,6 +181,16 @@ public sealed class AppSettings
     /// <summary>Last day the AES endpoint was asked, per game directory (for <see cref="AesReload.OncePerDay"/>).</summary>
     public Dictionary<string, DateTime> LastAesReload { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// FModel's NextUpdateCheck: the launch update check waits until then (Help › Releases › Remind Me; MaxValue is
+    /// never). Checked at every launch by default.
+    /// </summary>
+    public DateTime NextUpdateCheck { get; set; } = DateTime.MinValue;
+    public DateTime LastUpdateCheck { get; set; } = DateTime.MinValue;
+
+    /// <summary>The version that last ran, so the first launch after an update shows its release notes.</summary>
+    public string? LastRunVersion { get; set; }
+
     [JsonConverter(typeof(StringEnumConverter))]
     public JsonHighlightTheme JsonHighlightTheme { get; set; } = JsonHighlightTheme.Default;
 

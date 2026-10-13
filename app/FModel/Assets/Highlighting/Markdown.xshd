@@ -1,0 +1,30 @@
+<SyntaxDefinition name="Markdown" extensions=".md;.markdown"
+     xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <!-- Release notes (Help › Releases), in the palette of the other definitions -->
+
+  <Color name="Heading" foreground="#61AFEF" fontWeight="bold"/>
+  <Color name="Bold"    fontWeight="bold"/>
+  <Color name="Code"    foreground="#98C379"/>
+  <Color name="Marker"  foreground="#F78C6C"/>
+  <Color name="Link"    foreground="#7F848E"/>
+  <Color name="Url"     foreground="#61AFEF" underline="true"/>
+
+  <RuleSet>
+    <Rule color="Heading">^\#{1,6}\s.*$</Rule>
+    <Rule color="Marker">^\s*(?:[-*+]|\d+\.)(?=\s)</Rule>
+    <Span color="Code" multiline="true">
+      <Begin>```</Begin>
+      <End>```</End>
+    </Span>
+    <Span color="Code" multiline="false">
+      <Begin>`</Begin>
+      <End>`</End>
+    </Span>
+    <Span color="Bold" multiline="false">
+      <Begin>\*\*</Begin>
+      <End>\*\*</End>
+    </Span>
+    <Rule color="Link">\]\([^)\s]+\)</Rule>
+    <Rule color="Url">https?://[^\s)&gt;]+</Rule>
+  </RuleSet>
+</SyntaxDefinition>

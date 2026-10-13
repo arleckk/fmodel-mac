@@ -320,6 +320,20 @@ USD. Settings and logs from the old `FModelMac` folders (`~/Library/Application 
 `~/Library/Logs/FModelMac`) are moved to the `FModel` ones automatically on first launch
 (`AppSettings.MovedFromOldName`).
 
+## Updates
+
+FModel's update check, against this port's GitHub releases (`Services/UpdateChecker.cs`,
+`ViewModels/MainViewModel.Updates.cs`, `Views/ReleasesWindow`): at launch, unless `NextUpdateCheck` is in the future, the
+app asks `api.github.com/repos/arleckk/fmodel-mac/releases` for the stable releases (drafts, pre-releases and tags that
+aren't `v<major>.<minor>[.<patch>]` are left out) and compares them with the csproj's `Version`. A newer one shows
+FModel's **Update Available** status bar button and opens the Releases window ("A new update is available!"): Download
+Latest Release (the `-macos-arm64.zip` asset, in the browser), Remind Me (now, in 3 days, next week, next month,
+never, like FModel's RemindMeCommand) and the history with each release's notes. On the first launch of a new
+version (`LastRunVersion`) its notes open in a tab (`Markdown.xshd`), FModel's ShowChangelog. Failing to reach GitHub
+is only logged: FModel's error box would come up at every offline launch. The app replaces nothing itself: it's not
+notarized, so an in-place update would meet Gatekeeper anyway. `FMODEL_NO_UPDATES=1` turns the launch check off (the
+harness sets it).
+
 ## Command line and MCP server
 
 `FModel` with a command doesn't open the window: it mounts the game, does the job and exits
@@ -456,6 +470,9 @@ dotnet run -- --streaming <outdir> <paks> <EGame> <aes|-> <map.umap>
 # Profiles: starts from an old configuration for game A, creates B's profile with the Directory Selector,
 # switches between both and restarts
 dotnet run -- --profiles <outdir> <paks A> <EGame A> <aes A|-> <paks B> <EGame B> <aes B|->
+# The update check: release list parsing and Remind Me dates on a sample, then the Update Available button, the
+# Releases window and the release notes tab (screenshots); "live" also lists the real releases (network)
+dotnet run -- --updates <outdir> <paks> <EGame> [live]
 # The MCP server end to end, through the SDK's client: a profile for the game, then every tool (paging, images,
 # exports, errors); give the bundle's executable to test the packaged app instead of FModel.dll
 dotnet run -- --mcp-test <outdir> <paks> <EGame> <usmap> [app/dist/FModel.app/Contents/Resources/bin/fmodel]
