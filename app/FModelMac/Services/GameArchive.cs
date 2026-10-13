@@ -118,7 +118,7 @@ public sealed class GameArchive : IDisposable
     }
 
     /// <summary>Folder index of the given archives (all mounted ones when <paramref name="scope"/> is null).</summary>
-    public FolderIndex BuildIndex(IReadOnlySet<IVfsReader>? scope)
+    public FolderIndex BuildIndex(IReadOnlySet<IVfsReader>? scope, Func<GameFile, bool>? include = null)
     {
         var folders = new Dictionary<string, FolderInfo>(StringComparer.OrdinalIgnoreCase) { [""] = new() };
         // Values yields one entry per container, highest priority first (patch paks before base),
@@ -138,6 +138,7 @@ public sealed class GameArchive : IDisposable
             if (file.IsUePackagePayload) continue;
             if (scope is not null && (file is not VfsEntry entry || !scope.Contains(entry.Vfs))) continue;
             if (!seen.Add(file.Path)) continue;
+            if (include is not null && !include(file)) continue;
 
             var dir = file.Path.Contains('/') ? file.Directory : "";
             GetOrAdd(dir).Files.Add(file);
@@ -154,7 +155,7 @@ public sealed class GameArchive : IDisposable
 
         foreach (var info in folders.Values)
             info.Files.Sort((a, b) => StringComparer.OrdinalIgnoreCase.Compare(a.Name, b.Name));
-        return new FolderIndex(folders, seen.Count);
+        return new FolderIndex(folders, folders.Values.Sum(f => f.Files.Count));
     }
 
     private static void EnsureOodle()

@@ -415,6 +415,52 @@ if (args is ["--json", var jsonPaks, var jsonGame, var jsonAes, ..])
         return;
     }
 
+    // "--json ... --backup <out dir>" creates a backup, reads it back and compares it with the game, timed
+    if (args[4..] is ["--backup", var backupDir])
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var (backupFile, written) = GameBackup.Create(jsonProvider, vm.Archive.ProjectName, backupDir);
+        var created = sw.Elapsed.TotalSeconds;
+        var read = GameBackup.Read(backupFile);
+        var compared = GameBackup.Compare(jsonProvider, read);
+        Console.WriteLine($"{Path.GetFileName(backupFile)}: {written:N0} files, {new FileInfo(backupFile).Length / 1024.0:N0} KB, created in {created:F2}s, " +
+                          $"read+compared in {sw.Elapsed.TotalSeconds - created:F2}s: {compared.New.Count} new, {compared.Modified.Count} modified, {compared.Removed} removed");
+        return;
+    }
+
+    // "--json ... --online-backup <dir>" lists FModel's backups, downloads the smallest and streams it against the game
+    if (args[4..] is ["--online-backup", var onlineDir])
+    {
+        var list = OnlineBackups.ListAsync().GetAwaiter().GetResult();
+        foreach (var b in list) Console.WriteLine($"  {b.Display} | {b.Meta?.Version} | {b.Meta?.Entries:N0} entries");
+        var smallest = list.OrderBy(b => b.Size).First();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var cached = Path.Combine(onlineDir, smallest.FileName);
+        var downloaded = File.Exists(cached) && new FileInfo(cached).Length == smallest.Size
+            ? cached
+            : OnlineBackups.DownloadAsync(smallest, onlineDir).GetAwaiter().GetResult();
+        Console.WriteLine($"downloaded {Path.GetFileName(downloaded)}: {new FileInfo(downloaded).Length:N0} bytes (listed {smallest.Size:N0}) in {sw.Elapsed.TotalSeconds:F1}s");
+        sw.Restart();
+        var all = GameBackup.ReadEntries(downloaded);
+        var index = 0;
+        int slashed = 0, projectStores = 0;
+        foreach (var e in all)
+        {
+            if (e.Path.StartsWith('/')) slashed++;
+            if (e.Path.EndsWith("ue.projectstore")) projectStores++;
+            if (index is 3 or 50_000 or 2_000_000 or 6_000_000) Console.WriteLine($"  #{index}: {e.Path} {e.Size} {(e.IsEncrypted ? "encrypted" : "")}");
+            index++;
+        }
+        Console.WriteLine($"  {slashed:N0} paths start with '/', {projectStores:N0} are ue.projectstore");
+        GC.Collect();
+        var before = GC.GetTotalMemory(true);
+        var compared = GameBackup.Compare(jsonProvider, downloaded);
+        Console.WriteLine($"compared {compared.BackupCount:N0} entries (listed {smallest.Meta?.Entries:N0}) in {sw.Elapsed.TotalSeconds:F1}s: " +
+                          $"{compared.New.Count} new, {compared.Modified.Count} modified, {compared.Removed:N0} removed | " +
+                          $"peak working set {Environment.WorkingSet / 1048576:N0} MB, managed {(GC.GetTotalMemory(false) - before) / 1048576:N0} MB");
+        return;
+    }
+
     // "--json ... --scan-morphs" lists skeletal meshes that have morph targets
     if (args[4..] is ["--scan-morphs"])
     {
@@ -805,6 +851,38 @@ async Task RunAsync()
     favoriteDialog.Close();
     vm.RemoveFavorite(vm.Favorites[^1]);
     Console.WriteLine($"After delete: {vm.Favorites.Count} favorite(s), menu items {window.FindControl<MenuItem>("FavoritesMenu")!.ItemsSource!.Cast<object>().Count()}");
+
+    // Backup: create one, compare with it (nothing changed), then with an "older" one missing 5 files and with 3
+    // sizes changed, through Loading Mode "All (New)"/"All (Modified)" and the Backup window
+    var backupPath = await vm.CreateBackupAsync();
+    var backupEntries = GameBackup.Read(backupPath!);
+    var same = GameBackup.Compare(vm.Archive!.Provider, backupEntries);
+    var packagesInBackup = backupEntries.Where(b => b.Path.EndsWith(".uasset")).ToArray();
+    var dropped = packagesInBackup.Take(5).Select(b => b.Path).ToHashSet();
+    var resized = packagesInBackup.Skip(5).Take(3).Select(b => b.Path).ToHashSet();
+    var olderPath = Path.Combine(Path.GetDirectoryName(backupPath)!, "CUE4ParseFixtures_older.fbkp");
+    GameBackup.Write(backupEntries.Where(b => !dropped.Contains(b.Path))
+        .Select(b => resized.Contains(b.Path) ? b with { Size = b.Size + 1 } : b)
+        .Append(new BackupEntry("CUE4ParseFixtures/Content/Removed/Gone.uasset", 10, false)).ToArray(), olderPath);
+    vm.PickBackupFile = () => Task.FromResult<string?>(olderPath);
+    vm.LoadingMode = MainViewModel.LoadNew;
+    await vm.LoadCommand.ExecuteAsync(null);
+    var newLog = vm.Logs[^1].Message;
+    var newCount = vm.Folders.VisibleFolders.Count;
+    var modified = await vm.LoadBackupChangesAsync(olderPath, newFiles: false);
+    Console.WriteLine($"Backup: {Path.GetFileName(backupPath)} {backupEntries.Count} entries, {new FileInfo(backupPath!).Length} bytes | " +
+                      $"same game: {same.New.Count} new, {same.Modified.Count} modified, {same.Removed} removed");
+    Console.WriteLine($"  All (New): {newLog} | folders shown {newCount}");
+    Console.WriteLine($"  All (Modified): {vm.Logs[^1].Message} | match {modified?.New.SetEquals(dropped)} {modified?.Modified.SetEquals(resized)}");
+    vm.LoadingMode = "All";
+    await vm.LoadCommand.ExecuteAsync(null);
+    // FMODELMAC_ONLINE=1 also lists FModel's backups (a request to its service)
+    var online = Environment.GetEnvironmentVariable("FMODELMAC_ONLINE") == "1";
+    var backupWindow = new BackupWindow(vm, loadOnline: online);
+    backupWindow.Show();
+    await Task.Delay(online ? 3000 : 200);
+    Save(backupWindow, "15-backup.png");
+    backupWindow.Close();
 
     // Export Session: queue meshes, textures, an animation and a world, then export them together
     vm.Settings.ExportImmediately = false;

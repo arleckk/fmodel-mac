@@ -49,7 +49,12 @@ public sealed partial class MainViewModel : ObservableObject
     public ObservableCollection<AssetItem> Packages { get; } = [];
     public ObservableCollection<AssetTab> Tabs { get; } = [];
     public ObservableCollection<LogEntry> Logs { get; } = [];
-    public IReadOnlyList<string> LoadingModes { get; } = ["Multiple", "All"];
+    // FModel's loading modes; the last two compare the game with an older backup (Directory › Backup)
+    public const string LoadNew = "All (New)", LoadModified = "All (Modified)";
+    public IReadOnlyList<string> LoadingModes { get; } = ["Multiple", "All", LoadNew, LoadModified];
+
+    /// <summary>Asks for a backup file for "All (New)"/"All (Modified)"; set by the window (a file picker).</summary>
+    public Func<Task<string?>>? PickBackupFile { get; set; }
 
     [ObservableProperty] private string _title = "";
     [ObservableProperty]
@@ -414,6 +419,13 @@ public sealed partial class MainViewModel : ObservableObject
             }
         }
 
+        if (LoadingMode is LoadNew or LoadModified)
+        {
+            if ((PickBackupFile is null ? null : await PickBackupFile()) is { } picked)
+                await LoadBackupChangesAsync(picked, LoadingMode == LoadNew);
+            return;
+        }
+
         IsBusy = true;
         SetStatus(StatusKind.Loading, "Loading packages");
         try
@@ -436,6 +448,65 @@ public sealed partial class MainViewModel : ObservableObject
         finally
         {
             IsBusy = false;
+        }
+    }
+
+    /// <summary>FModel's "All (New)" / "All (Modified)": loads only what changed since an older backup.</summary>
+    public async Task<BackupComparison?> LoadBackupChangesAsync(string backup, bool newFiles)
+    {
+        if (_archive is not { } archive || IsBusy) return null;
+        IsBusy = true;
+        SetStatus(StatusKind.Loading, "Comparing with the backup");
+        try
+        {
+            var sw = Stopwatch.StartNew();
+            Log(LogKind.Information, $"Backup file older than current game is '{Path.GetFileName(backup)}'");
+            var (comparison, index) = await Task.Run(() =>
+            {
+                var compared = GameBackup.Compare(archive.Provider, backup);
+                var wanted = newFiles ? compared.New : compared.Modified;
+                return (compared, archive.BuildIndex(null, f => wanted.Contains(f.Path)));
+            });
+            Folders.Populate(index);
+            Log(LogKind.Information, $"Loaded {index.FileCount:N0} {(newFiles ? "new" : "modified")} packages in {sw.Elapsed.TotalSeconds:F2}s " +
+                                     $"(backup of {comparison.BackupCount:N0} files: {comparison.New.Count:N0} new, " +
+                                     $"{comparison.Modified.Count:N0} modified, {comparison.Removed:N0} removed)");
+            SelectedLeftTab = 1;
+            SetStatus(StatusKind.Completed, "Completed");
+            return comparison;
+        }
+        catch (Exception e)
+        {
+            Serilog.Log.Error(e, "Could not compare with {Backup}", backup);
+            Log(LogKind.Error, $"Could not read '{Path.GetFileName(backup)}': {e.Message}");
+            SetStatus(StatusKind.Failed, "Failed");
+            return null;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    /// <summary>FModel's Directory › Backup › Create: the current game's file list in Output/Backups.</summary>
+    public async Task<string?> CreateBackupAsync()
+    {
+        if (_archive is not { } archive) return null;
+        SetStatus(StatusKind.Loading, "Creating backup");
+        try
+        {
+            var (path, count) = await Task.Run(() => GameBackup.Create(archive.Provider, archive.ProjectName, GameBackup.Directory(Settings)));
+            Log(LogKind.Information, $"Successfully created '{Path.GetFileName(path)}' ({count:N0} files, {AssetPreview.FormatSize(new FileInfo(path).Length)})");
+            LastExportPath = path;
+            SetStatus(StatusKind.Completed, "Completed");
+            return path;
+        }
+        catch (Exception e)
+        {
+            Serilog.Log.Error(e, "Could not create a backup");
+            Log(LogKind.Error, $"Could not create the backup: {e.Message}");
+            SetStatus(StatusKind.Failed, "Failed");
+            return null;
         }
     }
 

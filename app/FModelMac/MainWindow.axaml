@@ -62,7 +62,7 @@
                 <MenuItem Header="AES" Click="OnAesManagerClick" IsEnabled="{Binding IsReady}">
                     <MenuItem.Icon><c:Glyph Data="{StaticResource KeyIcon}" /></MenuItem.Icon>
                 </MenuItem>
-                <MenuItem Header="Backup" IsEnabled="False">
+                <MenuItem Header="Backup" Click="OnBackupClick" IsEnabled="{Binding IsReady}">
                     <MenuItem.Icon><c:Glyph Data="{StaticResource BackupIcon}" /></MenuItem.Icon>
                 </MenuItem>
                 <MenuItem Header="Archives Info" Click="OnArchivesInfoClick" IsEnabled="{Binding IsReady}">

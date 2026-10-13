@@ -51,6 +51,7 @@ public partial class MainWindow : Window
         if (_vm is null) return;
 
         _vm.SetClipboardText = text => Clipboard?.SetTextAsync(text) ?? Task.CompletedTask;
+        _vm.PickBackupFile = PickBackupFileAsync;
         _vm.Favorites.CollectionChanged += OnFavoritesChanged;
         BuildFavoritesMenu();
         _vm.PropertyChanged += OnViewModelPropertyChanged;
@@ -146,6 +147,22 @@ public partial class MainWindow : Window
             Vm.SaveSettings();
             await Vm.InitializeGameAsync();
         }
+    }
+
+    private async void OnBackupClick(object? sender, RoutedEventArgs e) => await new BackupWindow(Vm).ShowDialog(this);
+
+    // "All (New)" / "All (Modified)" ask for the backup to compare with, starting in Output/Backups
+    private async Task<string?> PickBackupFileAsync()
+    {
+        var directory = GameBackup.Directory(Vm.Settings);
+        var start = Directory.Exists(directory) ? await StorageProvider.TryGetFolderFromPathAsync(directory) : null;
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Select a backup file older than your current game version",
+            SuggestedStartLocation = start,
+            FileTypeFilter = [new FilePickerFileType("FBKP Files") { Patterns = ["*.fbkp"] }, FilePickerFileTypes.All]
+        });
+        return files.FirstOrDefault()?.TryGetLocalPath();
     }
 
     private void OnArchivesInfoClick(object? sender, RoutedEventArgs e)

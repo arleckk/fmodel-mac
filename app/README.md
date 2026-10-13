@@ -38,8 +38,15 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
 `#32323F`, `#262630`…) y sus acentos (`#206BD4` listo, `#D49220` cargando, `#C22B2B` error).
 
 - **Menú:** Directory (Selector, AES, Archives Info), Packages (Search ⌘⇧F, References ⌘⇧R),
-  Views, Settings, Help. Lo que todavía no existe en macOS (Backup, Image Merger) aparece
-  deshabilitado.
+  Views, Settings, Help. Lo que todavía no existe en macOS (Image Merger) aparece deshabilitado.
+- **Backup (Directory › Backup) y Loading Mode "All (New)" / "All (Modified)":** como en FModel, un
+  backup (`.fbkp`) guarda la ruta, el tamaño y el cifrado de todos los archivos del juego; al cargar
+  con All (New) o All (Modified) se elige un backup más viejo y sólo se ven los archivos nuevos o
+  los que cambiaron. Mismo formato que FModel (LZ4 frame, incluido su formato viejo sin versión),
+  así que sus backups sirven aquí y al revés. La ventana crea el backup del juego actual en
+  `Output/Backups`, lista los tuyos (Show in Finder, Load New, Load Modified) y descarga los de
+  FModel (su servicio, Fortnite). El backup se lee como stream: el de Fortnite 41.20 (6.7 millones
+  de entradas, 43 MB) se compara en ~4 s con ~130 MB de memoria.
 - **Favorite Directories (Packages › Favorite Directories):** atajos a carpetas, guardados por
   carpeta del juego, como en FModel: Add Directory… y, por cada uno, Go To / Edit Directory… /
   Delete Directory. Go To carga los archives si hace falta y abre la carpeta en Folders. Al montar
@@ -207,6 +214,9 @@ dotnet run -- --decode sonido.wav wav salida.f32
 dotnet run -- --json <carpeta Paks> GAME_UE4_25 <AES|-> Game/Content/.../Paquete.uasset
 # Find References (con el tiempo del índice) y el tamaño de Show Metadata
 dotnet run -- --json <carpeta Paks> GAME_UE4_25 <AES|-> --refs Game/Content/.../Paquete.uasset
+# Crea un backup, lo lee y lo compara con el juego (tiempos); --online-backup <dir> además lista los de
+# FModel, descarga el más chico y lo compara (requiere red)
+dotnet run -- --json <carpeta Paks> GAME_UE4_25 <AES|-> --backup ./out
 # Decompile Blueprint: líneas, tiempo y clases que fallaron (FMODELMAC_LINES=n imprime n líneas)
 dotnet run -- --json <carpeta Paks> GAME_UE4_25 <AES|-> --decompile Game/Content/.../Algo_BP.uasset
 ```
