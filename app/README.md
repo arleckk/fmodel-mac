@@ -22,9 +22,9 @@ in the data folder (`~/Library/Application Support/FModel/`) and it will be used
 app/packaging/build-app.sh
 ```
 
-Produces `app/dist/FModel.app` (~180 MB): a self-contained publish for `osx-arm64`
-(no .NET install required) with ReadyToRun, `.icns` icon, `Info.plist` and ad-hoc signing
-(Apple Silicon won't run unsigned code). Requires macOS 14+.
+Produces `app/dist/FModel.app` (~190 MB): a self-contained publish for `osx-arm64`
+(no .NET install required) with ReadyToRun, `.icns` icon, `Info.plist`, the `fmodel` command-line link and
+ad-hoc signing (Apple Silicon won't run unsigned code). Requires macOS 14+.
 
 - **Icon:** `packaging/make_icon.py` takes the logo from `FModel.ico` (256 px max.) and composites it
   onto the Big Sur icon template. Its default `mac` look (teal body and a Command-key ⌘ badge) keeps the
@@ -320,6 +320,50 @@ USD. Settings and logs from the old `FModelMac` folders (`~/Library/Application 
 `~/Library/Logs/FModelMac`) are moved to the `FModel` ones automatically on first launch
 (`AppSettings.MovedFromOldName`).
 
+## Command line and MCP server
+
+`FModel` with a command doesn't open the window: it mounts the game, does the job and exits
+(`Program.Main` → `Headless/Cli.cs`). The bundle has an `fmodel` link to the executable in
+`Contents/Resources/bin` (the volume is case-insensitive, so it can't sit next to `FModel` in `MacOS`);
+putting that folder on the PATH gives `fmodel` without `sudo`. Any argument other than the `-psn_`/`-NS…` ones
+macOS and Xcode pass is taken as a command, so a typo prints an error instead of opening the app.
+
+```bash
+fmodel profiles                                       # saved profiles, * is the active one
+fmodel info                                           # mount the active profile and summarize it
+fmodel search -p "Digimon SuperRumble" Flamedramon    # a profile by name
+fmodel cat /Game/Characters/Hero/Hero --export Hero   # properties JSON (one export)
+fmodel export /Game/Characters/Hero --kind models     # into Output/Exports, with Settings › Export
+fmodel ls -d <Paks folder> -g GAME_UE4_25 -k 0x… Game/Content   # a game without a profile
+```
+
+- **Same settings, read only:** `HeadlessGame` loads `settings.json`, applies the profile (or `--dir`, `--game`,
+  `--aes`, `--mappings`) in memory and never saves, so the app stays the only one that changes the settings and
+  nothing clashes when both run. AES endpoints are only asked with `--refresh-aes` (the app refreshes them per
+  "AES Reload at Launch"); mapping endpoints and their cache work as in the app. The reference index and the
+  downloaded mappings are shared with the app.
+- **Output:** results on stdout (`--json` for scripts), messages on stderr, logs in
+  `~/Library/Logs/FModel/FModel-cli-<date>.log` (`-v` also shows warnings on stderr). Exit codes: 0, 1 (error),
+  2 (usage), 130 (Ctrl+C).
+- **Exports** (`Headless/HeadlessExport.cs`): properties and decompiled Blueprints are written directly,
+  sounds go through the audio player's extractor, and models, animations, worlds, textures and raw data through
+  the Export Session (`ExportSessionViewModel`, which already ran without a UI thread for the harness), so
+  every export setting, the Nanite fallback and the per-asset errors are the app's.
+- **MCP server** (`fmodel mcp`, `Headless/FModelMcpServer.cs`): stdio, with the official C# SDK
+  (`ModelContextProtocol.Core`, without the hosting packages). The default game (the active profile, or the
+  options given to `mcp`) starts mounting when the server starts and stays mounted; `load_game` switches. Tools:
+  `list_profiles`, `load_game`, `game_info`, `list_folder`, `search_files`, `read_file`, `get_package_metadata`,
+  `decompile_blueprint`, `find_references`, `get_texture` and `export_assets` (the only one that isn't
+  read-only). Long texts are paged by characters (`offset`, `max_chars`, 40,000 by default) and the last texts
+  read are kept, so the next page doesn't serialize the package again; lists are paged by entries. Textures are
+  scaled down to `max_size` (1024 px by default) before they're sent. User errors (a wrong path, an unknown
+  profile) reach the model with their message. stdout is the protocol, so `Console.Out` is pointed at stderr
+  once the transport holds the real stream.
+
+```bash
+claude mcp add fmodel -- /Applications/FModel.app/Contents/MacOS/FModel mcp
+```
+
 ## Decisions
 
 - **Avalonia 11.3, not 12:** Avalonia 12 uses SkiaSharp 3.x and CUE4Parse-Conversion pins
@@ -412,6 +456,9 @@ dotnet run -- --streaming <outdir> <paks> <EGame> <aes|-> <map.umap>
 # Profiles: starts from an old configuration for game A, creates B's profile with the Directory Selector,
 # switches between both and restarts
 dotnet run -- --profiles <outdir> <paks A> <EGame A> <aes A|-> <paks B> <EGame B> <aes B|->
+# The MCP server end to end, through the SDK's client: a profile for the game, then every tool (paging, images,
+# exports, errors); give the bundle's executable to test the packaged app instead of FModel.dll
+dotnet run -- --mcp-test <outdir> <paks> <EGame> <usmap> [app/dist/FModel.app/Contents/Resources/bin/fmodel]
 # Decompile Blueprint: lines, time and classes that failed (FMODEL_LINES=n prints n lines)
 dotnet run -- --json <Paks folder> GAME_UE4_25 <AES|-> --decompile Game/Content/.../Algo_BP.uasset
 ```

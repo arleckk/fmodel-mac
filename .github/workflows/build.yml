@@ -71,13 +71,24 @@ jobs:
       - name: Regression (headless, CUE4Parse fixtures)
         run: |
           dotnet build app/FModel.Snapshot -v q
-          fixtures=upstream/CUE4Parse/CUE4Parse.Tests/Fixtures
+          fixtures=upstream/CUE4Parse/CUE4Parse.Tests/Fixtures/UE5_8
           out="$RUNNER_TEMP/regression"
           FMODEL_USMAP="$fixtures/Mappings/CUE4ParseFixtures-Oodle.usmap" FMODEL_DATA_DIR="$out/data" \
-            dotnet app/FModel.Snapshot/bin/Debug/net10.0/FModel.Snapshot.dll "$fixtures/UE5_8" "$out" < /dev/null | tee "$RUNNER_TEMP/regression.log"
+            dotnet app/FModel.Snapshot/bin/Debug/net10.0/FModel.Snapshot.dll "$fixtures" "$out" < /dev/null | tee "$RUNNER_TEMP/regression.log"
           # 7 of the 8 queued assets export; AS_Fixture's ACL compression isn't in the fixtures
           grep -q "^Export Session: 7 ok, 1 failed" "$RUNNER_TEMP/regression.log"
           echo "$(ls "$out"/*.png | wc -l | tr -d ' ') screenshots"
+
+      - name: Command line and MCP server
+        run: |
+          fixtures="$PWD/upstream/CUE4Parse/CUE4Parse.Tests/Fixtures/UE5_8"
+          game=(-d "$fixtures" -g GAME_UE5_8 -m "$fixtures/Mappings/CUE4ParseFixtures-Oodle.usmap")
+          export FMODEL_DATA_DIR="$RUNNER_TEMP/cli-data"
+          bin=app/FModel.Snapshot/bin/Debug/net10.0
+          dotnet $bin/FModel.dll info "${game[@]}"
+          dotnet $bin/FModel.dll cat "${game[@]}" /Game/Fixtures/Blueprints/BP_Fixture --export Default__BP_Fixture_C | grep -q '"Name": "Default__BP_Fixture_C"'
+          dotnet $bin/FModel.dll export "${game[@]}" --kind textures -o "$RUNNER_TEMP/cli-out" /Game/Fixtures/Textures
+          dotnet $bin/FModel.Snapshot.dll --mcp-test "$RUNNER_TEMP/mcp" "$fixtures" GAME_UE5_8 "$fixtures/Mappings/CUE4ParseFixtures-Oodle.usmap"
 
       - name: Upload regression screenshots
         if: always()
@@ -92,6 +103,10 @@ jobs:
         run: |
           app/packaging/build-app.sh
           codesign --verify --deep --strict app/dist/FModel.app
+          # The bundle's command-line link runs the packaged executable as the MCP server
+          fixtures="$PWD/upstream/CUE4Parse/CUE4Parse.Tests/Fixtures/UE5_8"
+          dotnet app/FModel.Snapshot/bin/Debug/net10.0/FModel.Snapshot.dll --mcp-test "$RUNNER_TEMP/mcp-app" "$fixtures" GAME_UE5_8 \
+            "$fixtures/Mappings/CUE4ParseFixtures-Oodle.usmap" "$PWD/app/dist/FModel.app/Contents/Resources/bin/fmodel"
           ditto -c -k --sequesterRsrc --keepParent app/dist/FModel.app "$RUNNER_TEMP/FModel-macos-arm64.zip"
 
       - uses: actions/upload-artifact@v7

@@ -516,6 +516,114 @@ if (args is ["--unluac", .. var chunkFiles])
     return;
 }
 
+// "--mcp-test <outdir> <paks> <EGame> <usmap> [server executable]" runs FModel's MCP server (FModel.dll mcp, or the given
+// executable, such as the bundled app's) with a profile for the game, and calls every tool through the MCP client SDK
+if (args is ["--mcp-test", var mcpOut, var mcpPaks, var mcpGame, var mcpUsmap, .. var mcpServer])
+{
+    var mcpData = Path.Combine(mcpOut, "data");
+    if (Directory.Exists(mcpOut)) Directory.Delete(mcpOut, true);
+    Environment.SetEnvironmentVariable("FMODEL_DATA_DIR", mcpData);
+    var profileSettings = new AppSettings { ArchiveDir = mcpPaks, Game = mcpGame, UsmapPath = mcpUsmap };
+    profileSettings.Profiles.Add(profileSettings.CaptureProfile("Fixtures"));
+    profileSettings.CurrentProfile = "Fixtures";
+    profileSettings.Save();
+
+    var transport = new ModelContextProtocol.Client.StdioClientTransport(new ModelContextProtocol.Client.StdioClientTransportOptions
+    {
+        Name = "fmodel",
+        Command = mcpServer is [var exe] ? exe : "dotnet",
+        Arguments = mcpServer is [_] ? ["mcp"] : [Path.Combine(AppContext.BaseDirectory, "FModel.dll"), "mcp"],
+        EnvironmentVariables = new Dictionary<string, string?> { ["FMODEL_DATA_DIR"] = mcpData }
+    });
+    var failures = 0;
+    void Check(string what, bool ok, string detail = "")
+    {
+        if (!ok) failures++;
+        Console.WriteLine($"{(ok ? "ok  " : "FAIL")} {what}{(detail.Length > 0 ? $": {detail}" : "")}");
+    }
+    await using (var client = await ModelContextProtocol.Client.McpClient.CreateAsync(transport))
+    {
+        async Task<(string Text, ModelContextProtocol.Protocol.CallToolResult Result)> Call(string tool, Dictionary<string, object?> arguments)
+        {
+            var result = await client.CallToolAsync(tool, arguments);
+            var text = string.Join("\n", result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().Select(t => t.Text));
+            return (text, result);
+        }
+        string First(string text) => text.Split('\n')[0];
+
+        Check("server", client.ServerInfo.Name == "fmodel" && client.ServerInstructions?.Contains("game_info") == true,
+            $"{client.ServerInfo.Name} {client.ServerInfo.Version}");
+        var tools = await client.ListToolsAsync();
+        Check("tools", tools.Count == 11, string.Join(", ", tools.Select(t => t.Name)));
+        Check("read-only hints", tools.Where(t => t.Name != "export_assets").All(t => t.ProtocolTool.Annotations?.ReadOnlyHint == true) &&
+                                 tools.Single(t => t.Name == "export_assets").ProtocolTool.Annotations?.ReadOnlyHint == false);
+
+        var (profiles, _) = await Call("list_profiles", []);
+        Check("list_profiles", profiles.Contains($"Fixtures | {mcpGame}") && profiles.Contains("active in the app"), profiles);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var (info, _) = await Call("game_info", []);
+        Check("game_info", info.Contains("Game: Fixtures") && info.Contains("Top-level folders: CUE4ParseFixtures/"), $"{sw.Elapsed.TotalSeconds:F2}s, {First(info)}");
+        var (folder, _) = await Call("list_folder", new() { ["path"] = "/Game/Fixtures" });
+        Check("list_folder", folder.Contains("CUE4ParseFixtures/Content/Fixtures/Blueprints/"), First(folder));
+        var (search, _) = await Call("search_files", new() { ["query"] = "T_*", ["limit"] = 5 });
+        Check("search_files paged", search.Contains("[showing 1–5 of") && search.Contains("offset=5"), First(search));
+        var (regex, _) = await Call("search_files", new() { ["query"] = "SW_.*Opus", ["regex"] = true });
+        Check("search_files regex", regex.Contains("SW_Format_Opus.uasset"), First(regex));
+
+        const string blueprint = "/Game/Fixtures/Blueprints/BP_Fixture";
+        var (whole, _) = await Call("read_file", new() { ["path"] = blueprint, ["max_chars"] = 200_000 });
+        var pages = new System.Text.StringBuilder();
+        var offset = 0;
+        for (var page = 0; page < 50; page++)
+        {
+            var (text, _) = await Call("read_file", new() { ["path"] = blueprint, ["offset"] = offset, ["max_chars"] = 1000 });
+            var note = text.LastIndexOf("\n[", StringComparison.Ordinal);
+            pages.Append(note >= 0 ? text[..note] : text);
+            var next = System.Text.RegularExpressions.Regex.Match(text, @"offset=(\d+) for more\]$");
+            if (!next.Success) break;
+            offset = int.Parse(next.Groups[1].Value);
+        }
+        Check("read_file pages", whole.StartsWith("[") && pages.ToString() == whole, $"{whole.Length:N0} characters, {offset / 1000 + 1} pages");
+        var (oneExport, _) = await Call("read_file", new() { ["path"] = blueprint, ["export_name"] = "Default__BP_Fixture_C" });
+        Check("read_file export_name", oneExport.Contains("\"Name\": \"Default__BP_Fixture_C\"") && !oneExport.Contains("\"Name\": \"BP_Fixture_C\""));
+        var (ini, _) = await Call("read_file", new() { ["path"] = "CUE4ParseFixtures/Config/DefaultGame.ini" });
+        Check("read_file text", ini.Contains("CulturesToStage"), First(ini));
+        var (metadata, _) = await Call("get_package_metadata", new() { ["path"] = blueprint });
+        Check("get_package_metadata", metadata.Contains("\"Summary\""));
+        var (code, _) = await Call("decompile_blueprint", new() { ["path"] = blueprint });
+        Check("decompile_blueprint", code.Contains("class UBP_Fixture_C"), First(code));
+        var (refs, _) = await Call("find_references", new() { ["path"] = "/Game/Fixtures/Animations/SKEL_Fixture" });
+        Check("find_references", refs.Contains("SK_Fixture.uasset"), First(refs));
+
+        var (_, texture) = await Call("get_texture", new() { ["path"] = "/Game/Fixtures/Textures/T_BC1", ["max_size"] = 64 });
+        var image = texture.Content.OfType<ModelContextProtocol.Protocol.ImageContentBlock>().FirstOrDefault();
+        if (image is not null) File.WriteAllBytes(Path.Combine(mcpOut, "T_BC1.png"), image.DecodedData.ToArray());
+        using (var bitmap = image is null ? null : SkiaSharp.SKBitmap.Decode(image.DecodedData.ToArray()))
+            Check("get_texture", bitmap is { Width: <= 64, Height: <= 64 } && image!.MimeType == "image/png",
+                $"{First(string.Join("", texture.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().Select(t => t.Text)))}, sent {bitmap?.Width}x{bitmap?.Height}");
+
+        var exportDir = Path.Combine(mcpOut, "exports");
+        var (exported, _) = await Call("export_assets", new() { ["paths"] = new[] { "/Game/Fixtures/Textures" }, ["kind"] = "textures", ["output_directory"] = exportDir });
+        var written = Directory.Exists(exportDir) ? Directory.GetFiles(exportDir, "*", SearchOption.AllDirectories) : [];
+        Check("export_assets", written.Any(f => f.EndsWith(".png")) && exported.StartsWith($"Exported {written.Length} file(s)"),
+            $"{First(exported)} ({string.Join(", ", written.GroupBy(Path.GetExtension).Select(g => $"{g.Count()} {g.Key}"))})");
+
+        var (missing, missingResult) = await Call("read_file", new() { ["path"] = "/Game/Nope" });
+        Check("error message", missingResult.IsError == true && missing.Contains("No file '/Game/Nope'"), missing);
+        var (badKind, badKindResult) = await Call("export_assets", new() { ["paths"] = new[] { blueprint }, ["kind"] = "nope" });
+        Check("error message (kind)", badKindResult.IsError == true && badKind.Contains("Unknown export kind"), badKind);
+
+        var (loaded, _) = await Call("load_game", new() { ["directory"] = mcpPaks, ["ue_version"] = mcpGame, ["mappings"] = mcpUsmap });
+        Check("load_game directory", loaded.Contains("Mounted:") && !loaded.Contains("Game: Fixtures"), First(loaded));
+        var (reloaded, _) = await Call("load_game", new() { ["profile"] = "Fixtures" });
+        Check("load_game profile", reloaded.StartsWith("Game: Fixtures"), First(reloaded));
+        var (unknown, unknownResult) = await Call("load_game", new() { ["profile"] = "Nope" });
+        Check("load_game unknown profile", unknownResult.IsError == true && unknown.Contains("pick one of 'Fixtures'"), unknown);
+    }
+    Console.WriteLine(failures == 0 ? "MCP: all checks passed" : $"MCP: {failures} check(s) failed");
+    Environment.Exit(failures == 0 ? 0 : 1);
+}
+
 // "--json <paks dir> <EGame> <aes|-> <package>..." prints the exports as FModel's JSON (for inspecting assets)
 // "--heightmap-test <dir>": a 16-bit grayscale PNG written and read back the way CUE4Parse exports landscape heightmaps
 if (args is ["--heightmap-test", var heightmapDir])

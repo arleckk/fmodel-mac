@@ -49,6 +49,12 @@ mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 cp -R "$PUBLISH_DIR/." "$BUNDLE/Contents/MacOS/"
 cp "$PACKAGING_DIR/$APP_NAME.icns" "$BUNDLE/Contents/Resources/$APP_NAME.icns"
 
+# The command line and the MCP server are the app's own executable with a command ("FModel ls …", "FModel mcp"):
+# Resources/bin holds an "fmodel" link to it, so that folder can go on the PATH (the volume is case-insensitive, so
+# the link can't sit next to FModel in MacOS)
+mkdir -p "$BUNDLE/Contents/Resources/bin"
+ln -s "../../MacOS/$APP_NAME" "$BUNDLE/Contents/Resources/bin/fmodel"
+
 # The app is GPL-3.0: its license and the third-party notices ship with it
 mkdir -p "$BUNDLE/Contents/Resources/Licenses"
 cp "$APP_ROOT/../LICENSE" "$BUNDLE/Contents/Resources/Licenses/LICENSE.txt"

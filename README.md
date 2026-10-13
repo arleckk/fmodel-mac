@@ -30,6 +30,9 @@ layout and features as closely as macOS allows.
   the notify sounds).
 - **Export:** raw data, properties, textures, models (glTF, UEFormat…), animations, worlds and audio,
   per package or per folder, through an Export Session window.
+- **Command line and MCP server:** `fmodel` lists, searches, reads and exports from the terminal, and
+  `fmodel mcp` lets AI assistants (Claude Code, Claude Desktop, any MCP client) browse a game, read its packages
+  and textures, and export assets, all with the profiles and settings saved in the app.
 
 The full list, with the design decisions and how each part was verified, is in
 [`app/README.md`](app/README.md).
@@ -61,10 +64,59 @@ Oodle-compressed games need nothing extra: CUE4Parse decompresses Oodle with
 [OodleSharp](https://github.com/NotOfficer/OodleSharp) (managed code, MIT), and no Oodle library from
 Epic Games Tools is included.
 
+## Command line
+
+The app's executable is also a command-line tool. Put its `fmodel` link on your PATH (zsh):
+
+```bash
+echo 'export PATH="/Applications/FModel.app/Contents/Resources/bin:$PATH"' >> ~/.zprofile
+```
+
+Open the app once from Finder first, so macOS lets it run. Then:
+
+```bash
+fmodel profiles                                  # the games saved in the app; * is the active one
+fmodel search Hero_Body                          # find files in the active profile's game
+fmodel cat /Game/Characters/Hero/Hero            # a package's properties, as FModel's JSON
+fmodel export /Game/Characters/Hero --kind models -p "My Game"   # glTF into ~/Documents/FModel/Output/Exports
+fmodel ls -d ~/Games/MyGame/Content/Paks -g GAME_UE5_4 -k 0x… Game/Content     # a game without a profile
+```
+
+`fmodel help` lists every command and option. The command line reads the app's profiles and settings
+(Settings › Export decides the formats) and never changes them.
+
+## MCP server
+
+`fmodel mcp` is an [MCP](https://modelcontextprotocol.io) server over stdio: an AI assistant can browse a game,
+search it, read packages as FModel's JSON, decompile Blueprints, find references, look at textures and export
+assets. It mounts the active profile (or `--profile <name>`) and keeps it mounted.
+
+Claude Code:
+
+```bash
+claude mcp add fmodel -- /Applications/FModel.app/Contents/MacOS/FModel mcp
+```
+
+Claude Desktop and other clients (`claude_desktop_config.json` or the client's equivalent):
+
+```json
+{
+  "mcpServers": {
+    "fmodel": {
+      "command": "/Applications/FModel.app/Contents/MacOS/FModel",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Every tool reads the game except `export_assets`, which writes into the app's output folder (or the folder you
+give it).
+
 ## Where it keeps things
 
 - Settings, profiles, favorites and caches: `~/Library/Application Support/FModel/`
-- Logs: `~/Library/Logs/FModel/`
+- Logs: `~/Library/Logs/FModel/` (the command line and the MCP server write `FModel-cli-<date>.log`)
 - Exports (by default): `~/Documents/FModel/Output/`
 
 ## Repository layout

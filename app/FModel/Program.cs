@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Media;
+using FModel.Headless;
 using FModel.Services;
 using Serilog;
 using Serilog.Events;
@@ -13,8 +14,11 @@ internal static class Program
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Library", "Logs", "FModel"));
 
     [STAThread]
-    public static void Main(string[] args)
+    public static int Main(string[] args)
     {
+        // "FModel ls …", "FModel mcp"…: the command line and the MCP server, without the window
+        if (Cli.Handles(args)) return Cli.Run(args);
+
         Log.Logger = new LoggerConfiguration()
             .WithExportLogs()
             .WriteTo.Console(restrictedToMinimumLevel: LogEventLevel.Information)
@@ -34,6 +38,7 @@ internal static class Program
         {
             Log.CloseAndFlush();
         }
+        return 0;
     }
 
     // Also used by the visual designer

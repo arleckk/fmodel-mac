@@ -86,7 +86,7 @@ public sealed record ExportSummary(IReadOnlyList<string> Files, int Failed, bool
 /// with progress, ETA and per-asset logs. CUE4Parse's ExportSession takes one set of options per run, so the queue
 /// runs in groups: worlds (USD only) and, with glTF, animations (USD) get their own run.
 /// </summary>
-public sealed partial class ExportSessionViewModel : ObservableObject
+public sealed partial class ExportSessionViewModel : ObservableObject, IDisposable
 {
     public ObservableCollection<ExportClassGroup> Groups { get; } = [];
     private readonly Dictionary<string, ExportItem> _items = new(StringComparer.OrdinalIgnoreCase);
@@ -153,6 +153,9 @@ public sealed partial class ExportSessionViewModel : ObservableObject
     public bool CanClear => !IsRunning;
 
     public ExportSessionViewModel() => ExportLogSink.Received += OnLog;
+
+    /// <summary>Stops listening to exporter logs (sessions created for one run, like the command line's).</summary>
+    public void Dispose() => ExportLogSink.Received -= OnLog;
 
     /// <summary>Queues exports; returns how many were new.</summary>
     public int Enqueue(IEnumerable<UObject> exports, IFileProvider provider)

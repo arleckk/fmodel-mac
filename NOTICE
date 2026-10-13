@@ -28,6 +28,11 @@ Libraries used by the app (NuGet):
 
 - Avalonia, Avalonia.AvaloniaEdit (https://github.com/AvaloniaUI) - MIT License.
 - CommunityToolkit.Mvvm (https://github.com/CommunityToolkit/dotnet) - MIT License.
+- ModelContextProtocol.Core, the MCP C# SDK (https://github.com/modelcontextprotocol/csharp-sdk) - Copyright
+  Model Context Protocol a Series of LF Projects, LLC. Apache License 2.0. With it, from Microsoft
+  (https://github.com/dotnet/extensions, https://github.com/dotnet/runtime): Microsoft.Extensions.AI.Abstractions,
+  Microsoft.Extensions.DependencyInjection.Abstractions and Microsoft.Extensions.Logging.Abstractions - MIT
+  License.
 - Newtonsoft.Json (https://github.com/JamesNK/Newtonsoft.Json) - MIT License.
 - NVorbis (https://github.com/NVorbis/NVorbis) - MIT License.
 - Serilog and its sinks (https://github.com/serilog/serilog) - Apache License 2.0.
