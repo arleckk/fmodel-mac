@@ -41,6 +41,9 @@
                         <MenuItem x:Name="ReferencesItem" Header="Find References" Click="OnFindReferencesClick">
                             <MenuItem.Icon><c:Glyph Data="{StaticResource SearchIcon}" /></MenuItem.Icon>
                         </MenuItem>
+                        <MenuItem x:Name="DecompileItem" Header="Decompile Blueprint" Click="OnDecompileClick">
+                            <MenuItem.Icon><c:Glyph Data="{StaticResource BlueprintIcon}" /></MenuItem.Icon>
+                        </MenuItem>
                         <Separator />
                         <MenuItem Header="Copy">
                             <MenuItem.Icon><c:Glyph Data="{StaticResource CopyIcon}" /></MenuItem.Icon>

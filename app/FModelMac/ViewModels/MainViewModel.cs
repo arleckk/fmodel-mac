@@ -162,6 +162,7 @@ public sealed partial class MainViewModel : ObservableObject
             var options = new LoadOptions(Settings.ArchiveDir!, game, Settings.AesKey, Settings.DynamicKeys, usmap, versioning);
             var progress = new Progress<string>(label => StatusLabel = label);
             _archive = await Task.Run(() => GameArchive.Load(options, progress));
+            ApplyReadOptions();
             _sounds = new SoundExtractor(_archive.Provider, Settings.ArchiveDir!);
 
             foreach (var archive in _archive.Archives)
@@ -502,29 +503,42 @@ public sealed partial class MainViewModel : ObservableObject
         return tab;
     }
 
+    /// <summary>Applies Settings › General › Advanced to the mounted game, without mounting it again.</summary>
+    public void ApplyReadOptions() => _archive?.ApplyReadOptions(Settings.ReadScriptData, Settings.ReadShaderMaps);
+
     /// <summary>FModel's Show Metadata: the package summary, names, imports and exports in a new tab.</summary>
-    public async Task ShowMetadataAsync(GameFile file)
+    public Task ShowMetadataAsync(GameFile file) =>
+        ShowTextAsync(file, "Metadata", "Json", $"Reading the metadata of {file.Name}", archive => archive.PackageMetadata(file));
+
+    /// <summary>FModel's Decompile Blueprint: the package's classes as C++-like pseudocode in a new tab.</summary>
+    public Task DecompileAsync(GameFile file) =>
+        ShowTextAsync(file, "Decompiled", "Cpp", $"Decompiling {file.Name}", archive => archive.DecompileBlueprint(file),
+            $"'{file.Name}' has no blueprint class to decompile");
+
+    // Builds the text first and only then takes a tab, so a package with nothing to show doesn't leave an empty one
+    private async Task ShowTextAsync(GameFile file, string kind, string highlight, string status, Func<GameArchive, string?> build,
+        string? emptyMessage = null)
     {
         if (_archive is not { } archive || !file.IsUePackage) return;
-        var tab = TargetTab(newTab: SelectedTab?.Entry is not null);
-        tab.Reset(file);
-        tab.Header = $"{file.Name} (Metadata)";
-        var cts = tab.Loading = new CancellationTokenSource();
-        SetStatus(StatusKind.Loading, $"Reading the metadata of {file.Name}");
+        SetStatus(StatusKind.Loading, status);
         try
         {
-            var json = await Task.Run(() => archive.PackageMetadata(file), cts.Token);
-            if (cts.IsCancellationRequested) return;
-            tab.ApplyText(json, "Json");
+            var text = await Task.Run(() => build(archive));
+            if (text is null)
+            {
+                Log(LogKind.Warning, emptyMessage ?? $"Nothing to show for '{file.Name}'");
+                SetStatus(StatusKind.Completed, "Completed");
+                return;
+            }
+            var tab = TargetTab(newTab: SelectedTab?.Entry is not null);
+            tab.Reset(file);
+            tab.Header = $"{file.Name} ({kind})";
+            tab.ApplyText(text, highlight);
             SetStatus(StatusKind.Completed, "Completed");
-        }
-        catch (OperationCanceledException)
-        {
         }
         catch (Exception e)
         {
-            if (cts.IsCancellationRequested) return;
-            Serilog.Log.Error(e, "Failed to read the metadata of {Path}", file.Path);
+            Serilog.Log.Error(e, "{Kind} failed for {Path}", kind, file.Path);
             Log(LogKind.Error, $"{e.GetType().Name}: {e.Message}");
             SetStatus(StatusKind.Failed, "Failed");
         }

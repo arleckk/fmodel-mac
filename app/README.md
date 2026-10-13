@@ -45,9 +45,16 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
 - **Folders:** árbol aplanado y virtualizado con los íconos de carpeta de FModel, contador café de
   paquetes, flecha que rota, "Bring Selected Folder To View" y "Collapse All".
 - **N Packages:** búsqueda, breadcrumb clicable, lista con íconos por tipo y menú contextual
-  (Extract in New Tab, Show Metadata, Find References, Export › Model/World/Animation/Properties/
-  Texture, Copy › rutas). Las pestañas de assets tienen su propio menú (Close Tab/All/Other, Show
-  Metadata, Find References).
+  (Extract in New Tab, Show Metadata, Find References, Decompile Blueprint, Export › Model/World/
+  Animation/Properties/Texture, Copy › rutas). Las pestañas de assets tienen su propio menú (Close
+  Tab/All/Other, Save Text…, Show Metadata, Find References, Decompile Blueprint).
+- **Decompile Blueprint:** las clases del paquete como pseudo C++ (variables con sus valores por
+  defecto y funciones a partir del bytecode Kismet), en una pestaña nueva con resaltado de C++. Usa
+  el descompilador de CUE4Parse, igual que FModel, pero siempre lee el bytecode: en FModel hay que
+  activar antes "Serialize Script Bytecode" y la opción está escondida. Save Text… guarda el `.cpp`.
+  En FF VII se descompilaron 800 Blueprints y Widgets sin fallas.
+- **Settings › General › Advanced:** "Serialize script bytecode" y "Serialize inlined shader maps"
+  de FModel, para ver esos datos en el JSON de propiedades. Se aplican sin volver a montar.
 - **Show Metadata:** el resumen del paquete, el name map, los imports y los exports en JSON, en una
   pestaña nueva (como FModel).
 - **Find References / Search For Packages:** la ventana de búsqueda tiene las pestañas By Path y
@@ -185,4 +192,6 @@ dotnet run -- --decode sonido.wav wav salida.f32
 dotnet run -- --json <carpeta Paks> GAME_UE4_25 <AES|-> Game/Content/.../Paquete.uasset
 # Find References (con el tiempo del índice) y el tamaño de Show Metadata
 dotnet run -- --json <carpeta Paks> GAME_UE4_25 <AES|-> --refs Game/Content/.../Paquete.uasset
+# Decompile Blueprint: líneas, tiempo y clases que fallaron (FMODELMAC_LINES=n imprime n líneas)
+dotnet run -- --json <carpeta Paks> GAME_UE4_25 <AES|-> --decompile Game/Content/.../Algo_BP.uasset
 ```

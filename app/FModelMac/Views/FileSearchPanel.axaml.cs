@@ -124,6 +124,7 @@ public partial class FileSearchPanel : UserControl
         var isPackage = Selected?.IsUePackage == true;
         MetadataItem.IsEnabled = isPackage;
         ReferencesItem.IsEnabled = isPackage;
+        DecompileItem.IsEnabled = isPackage;
     }
 
     private async void OnResultDoubleTapped(object? sender, TappedEventArgs e)
@@ -158,6 +159,11 @@ public partial class FileSearchPanel : UserControl
     private async void OnFindReferencesClick(object? sender, RoutedEventArgs e)
     {
         if (Vm is not null && Selected is { } file) await Vm.FindReferencesAsync(file);
+    }
+
+    private async void OnDecompileClick(object? sender, RoutedEventArgs e)
+    {
+        if (Vm is not null && Selected is { } file) await Vm.DecompileAsync(file);
     }
 
     private async void OnCopyClick(object? sender, RoutedEventArgs e)

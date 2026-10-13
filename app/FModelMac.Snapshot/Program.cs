@@ -392,6 +392,23 @@ if (args is ["--json", var jsonPaks, var jsonGame, var jsonAes, ..])
         return;
     }
 
+    // "--json ... --decompile <package...>" prints Decompile Blueprint (first lines) and its timing
+    if (args[4..] is ["--decompile", .. var bpTargets])
+    {
+        foreach (var target in bpTargets)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var cpp = vm.Archive.DecompileBlueprint(jsonProvider[target]);
+            if (cpp is null) { Console.WriteLine($"{target}: no class"); continue; }
+            var lines = cpp.Split('\n');
+            Console.WriteLine($"{target}: {lines.Length:N0} lines in {sw.Elapsed.TotalSeconds:F2}s, " +
+                              $"{lines.Count(l => l.TrimStart().StartsWith("// ") && l.Contains("Exception"))} failed class(es)");
+            foreach (var line in lines.Take(int.TryParse(Environment.GetEnvironmentVariable("FMODELMAC_LINES"), out var n) ? n : 25))
+                Console.WriteLine($"  | {line}");
+        }
+        return;
+    }
+
     // "--json ... --scan-morphs" lists skeletal meshes that have morph targets
     if (args[4..] is ["--scan-morphs"])
     {
@@ -750,6 +767,15 @@ async Task RunAsync()
     Console.WriteLine($"References: {vm.References?.Files.Length} files of '{vm.References?.Package.Name}' | {vm.StatusText}");
     Save(references, "9-references.png");
     references.Close();
+
+    // Decompile Blueprint in a new tab
+    var blueprint = vm.AllFiles().FirstOrDefault(f => f.Name == "BP_Components.uasset");
+    if (blueprint is not null)
+    {
+        await vm.DecompileAsync(blueprint);
+        Console.WriteLine($"Decompile: tab '{vm.SelectedTab?.Header}' {vm.SelectedTab?.Document.LineCount} lines | {vm.StatusText}");
+        Save(window, "10-decompiled.png");
+    }
 
     window.Close();
 }

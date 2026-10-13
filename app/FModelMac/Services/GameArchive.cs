@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using CUE4Parse.Compression;
 using CUE4Parse.Encryption.Aes;
 using CUE4Parse.FileProvider;
@@ -9,6 +10,8 @@ using CUE4Parse.UE4.IO;
 using CUE4Parse.UE4.IO.Objects;
 using CUE4Parse.UE4.Localization;
 using CUE4Parse.UE4.Objects.Core.Misc;
+using CUE4Parse.UE4.Objects.UObject;
+using CUE4Parse.UE4.Objects.UObject.Editor;
 using CUE4Parse.UE4.Readers;
 using CUE4Parse.UE4.Versions;
 using CUE4Parse.Utils;
@@ -224,6 +227,82 @@ public sealed class GameArchive : IDisposable
 
     /// <summary>FModel's Show Metadata: the package summary, name map, imports and exports as JSON.</summary>
     public string PackageMetadata(GameFile file) => JsonConvert.SerializeObject(Provider.LoadPackage(file), Formatting.Indented);
+
+    /// <summary>
+    /// FModel's Decompile Blueprint: every class in the package as C++-like pseudocode, with FModel's clean-ups of
+    /// the compiler's generated names. Null when the package has no class.
+    /// </summary>
+    public string? DecompileBlueprint(GameFile file)
+    {
+        // Function bodies are only read with ReadScriptData, which FModel leaves off by default: turn it on while
+        // the package and its functions deserialize (exports load lazily, so for the whole decompilation)
+        lock (_readOptionsLock)
+        {
+            Provider.ReadScriptData = true;
+            try
+            {
+                return Decompile(file);
+            }
+            finally
+            {
+                Provider.ReadScriptData = _readScriptData;
+            }
+        }
+    }
+
+    private readonly Lock _readOptionsLock = new();
+    private bool _readScriptData;
+
+    /// <summary>FModel's "Serialize Script Bytecode" and "Serialize Inlined Shader Maps" (Settings › General).</summary>
+    public void ApplyReadOptions(bool readScriptData, bool readShaderMaps)
+    {
+        lock (_readOptionsLock)
+        {
+            _readScriptData = readScriptData;
+            Provider.ReadScriptData = readScriptData;
+            Provider.ReadShaderMaps = readShaderMaps;
+        }
+    }
+
+    private string? Decompile(GameFile file)
+    {
+        var package = Provider.LoadPackage(file);
+        UClassCookedMetaData? cookedMetaData = null;
+        try
+        {
+            cookedMetaData = package.GetExportOrNull<UClassCookedMetaData>("CookedClassMetaData");
+        }
+        catch
+        {
+            // ignored, like FModel: the metadata only improves the output
+        }
+
+        var classes = new List<string>();
+        for (var i = 0; i < package.ExportMapLength; i++)
+        {
+            var pointer = new FPackageIndex(package, i + 1).ResolvedObject;
+            if (pointer?.Class is null) continue;
+            if (((AbstractUePackage) package).ConstructObject(pointer.Class, package) is not UClass) continue;
+            if (pointer.Object?.Value is not UClass blueprint) continue;
+            try
+            {
+                classes.Add(blueprint.DecompileBlueprintToPseudo(cookedMetaData));
+            }
+            catch (Exception e)
+            {
+                // One class CUE4Parse can't decompile shouldn't hide the others
+                Log.Warning(e, "Could not decompile {Class}", blueprint.Name);
+                classes.Add($"// {blueprint.Name}: {e.GetType().Name}: {e.Message}");
+            }
+        }
+        if (classes.Count == 0) return null;
+
+        var cpp = string.Join("\n\n", classes);
+        if (file.Path.Contains("_Verse.uasset")) cpp = Regex.Replace(cpp, "__verse_0x[a-fA-F0-9]{8}_", ""); // UnmangleCasedName
+        cpp = Regex.Replace(cpp, @"CallFunc_([A-Za-z0-9_]+)_ReturnValue", "$1");
+        cpp = Regex.Replace(cpp, @"K2Node_DynamicCast_([A-Za-z0-9_]+)", "$1");
+        return Regex.Replace(cpp, @"K2Node_([A-Za-z0-9_]+)", "$1");
+    }
 
     private readonly Lock _importersLock = new();
     private Dictionary<string, GameFile[]>? _importers;

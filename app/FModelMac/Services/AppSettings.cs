@@ -86,6 +86,9 @@ public sealed class AppSettings
         MaterialExportFormat, SaveEmbeddedMaterials, SaveMorphTargets, SocketExportFormat, CompressionFormat);
 
     public bool PreviewMeshes { get; set; } = true;
+    // FModel's "Serialize Script Bytecode" / "Serialize Inlined Shader Maps": extra data in the properties JSON
+    public bool ReadScriptData { get; set; }
+    public bool ReadShaderMaps { get; set; }
     // Audio (FModel's Audio Player and audio export settings)
     public bool PlayAudioOnExtract { get; set; } = true;
     public bool ConvertAudioToWav { get; set; } = true;

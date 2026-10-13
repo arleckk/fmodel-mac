@@ -53,6 +53,12 @@
                         </Grid>
                         <TextBlock Classes="dim" FontSize="11" Margin="160,4,0,0" TextWrapping="Wrap"
                                    Text="The language localized texts (FText) are shown in. If the game doesn't ship that exact culture, the closest one is used." />
+
+                        <c:SectionSeparator Text="ADVANCED" />
+                        <CheckBox x:Name="ScriptDataBox" Margin="160,0,0,0" Content="Serialize script bytecode" />
+                        <CheckBox x:Name="ShaderMapsBox" Margin="160,4,0,0" Content="Serialize inlined shader maps" />
+                        <TextBlock Classes="dim" FontSize="11" Margin="160,4,0,0" TextWrapping="Wrap"
+                                   Text="Adds Blueprint function bytecode and material shader maps to the properties JSON. Slower and much longer; Decompile Blueprint reads the bytecode either way." />
                     </StackPanel>
                 </Border>
             </TabItem>

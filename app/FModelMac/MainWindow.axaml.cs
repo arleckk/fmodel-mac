@@ -184,6 +184,7 @@ public partial class MainWindow : Window
         if (await dialog.ShowDialog<bool>(this))
         {
             Vm.SaveSettings();
+            Vm.ApplyReadOptions();
             if (dialog.RequiresReload) await Vm.InitializeGameAsync(); // also loads the localization
             else if (dialog.LanguageChanged) await Vm.LoadLocalizationAsync();
         }
@@ -333,6 +334,12 @@ public partial class MainWindow : Window
         if (SelectedPackageFile is { } file) await Vm.FindReferencesAsync(file);
     }
 
+    private async void OnDecompileClick(object? sender, RoutedEventArgs e)
+    {
+        foreach (var item in PackagesList.SelectedItems?.OfType<AssetItem>().Where(i => i.IsPackage).ToArray() ?? [])
+            await Vm.DecompileAsync(item.File);
+    }
+
     // ---------- Tabs ----------
 
     private static AssetTab? MenuTab(object? sender) => (sender as MenuItem)?.DataContext as AssetTab;
@@ -358,6 +365,31 @@ public partial class MainWindow : Window
     private async void OnTabFindReferencesClick(object? sender, RoutedEventArgs e)
     {
         if (MenuTab(sender)?.Entry is { } file) await Vm.FindReferencesAsync(file);
+    }
+
+    // FModel's Save Properties / Save Decompiled: the tab's text as .json, or .cpp for a decompiled blueprint
+    private async void OnTabSaveTextClick(object? sender, RoutedEventArgs e)
+    {
+        if (MenuTab(sender) is not { Entry: { } file } tab || tab.Document.TextLength == 0) return;
+        // Text files (ini, xml, lua…) keep their own extension
+        var extension = tab.Header.EndsWith("(Decompiled)") ? "cpp" : file.IsUePackage ? "json" : file.Extension;
+        var target = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = "Save Text",
+            SuggestedFileName = $"{Path.GetFileNameWithoutExtension(file.Name)}.{extension}",
+            DefaultExtension = extension
+        });
+        if (target is null) return;
+
+        await using var stream = await target.OpenWriteAsync();
+        await using var writer = new StreamWriter(stream);
+        await writer.WriteAsync(tab.Document.Text);
+        Vm.Log(LogKind.Information, $"Successfully saved '{target.Name}'");
+    }
+
+    private async void OnTabDecompileClick(object? sender, RoutedEventArgs e)
+    {
+        if (MenuTab(sender)?.Entry is { } file) await Vm.DecompileAsync(file);
     }
 
     private void OnTabsHeaderPointerReleased(object? sender, PointerReleasedEventArgs e)

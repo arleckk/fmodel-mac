@@ -278,7 +278,8 @@
                                                   IsEnabled="{Binding SelectedPackage.IsPackage, FallbackValue=False}">
                                             <MenuItem.Icon><c:Glyph Data="{StaticResource SearchIcon}" /></MenuItem.Icon>
                                         </MenuItem>
-                                        <MenuItem Header="Decompile Blueprint" IsEnabled="False">
+                                        <MenuItem Header="Decompile Blueprint" Click="OnDecompileClick"
+                                                  IsEnabled="{Binding SelectedPackage.IsPackage, FallbackValue=False}">
                                             <MenuItem.Icon><c:Glyph Data="{StaticResource BlueprintIcon}" /></MenuItem.Icon>
                                         </MenuItem>
                                         <Separator />
@@ -364,6 +365,9 @@
                                                         <MenuItem.Icon><c:Glyph Data="{StaticResource RemoveIcon}" /></MenuItem.Icon>
                                                     </MenuItem>
                                                     <Separator />
+                                                    <MenuItem Header="Save Text…" Click="OnTabSaveTextClick">
+                                                        <MenuItem.Icon><c:Glyph Data="{StaticResource SaveIcon}" /></MenuItem.Icon>
+                                                    </MenuItem>
                                                     <MenuItem Header="Show Metadata" Click="OnTabShowMetadataClick"
                                                               IsEnabled="{Binding Entry.IsUePackage, FallbackValue=False}">
                                                         <MenuItem.Icon><c:Glyph Data="{StaticResource InfoIcon}" /></MenuItem.Icon>
@@ -371,6 +375,10 @@
                                                     <MenuItem Header="Find References" Click="OnTabFindReferencesClick"
                                                               IsEnabled="{Binding Entry.IsUePackage, FallbackValue=False}">
                                                         <MenuItem.Icon><c:Glyph Data="{StaticResource SearchIcon}" /></MenuItem.Icon>
+                                                    </MenuItem>
+                                                    <MenuItem Header="Decompile Blueprint" Click="OnTabDecompileClick"
+                                                              IsEnabled="{Binding Entry.IsUePackage, FallbackValue=False}">
+                                                        <MenuItem.Icon><c:Glyph Data="{StaticResource BlueprintIcon}" /></MenuItem.Icon>
                                                     </MenuItem>
                                                 </ContextMenu>
                                             </DockPanel.ContextMenu>

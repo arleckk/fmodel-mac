@@ -37,6 +37,8 @@ public partial class SettingsWindow : Window
         OutputBox.Text = settings.OutputDir;
         UsmapBox.Text = settings.UsmapPath;
         PreviewMeshesBox.IsChecked = settings.PreviewMeshes;
+        ScriptDataBox.IsChecked = settings.ReadScriptData;
+        ShaderMapsBox.IsChecked = settings.ReadShaderMaps;
         ShowExportOptions(settings);
         AudioFormatBox.SelectedIndex = settings.ConvertAudioToWav ? 0 : 1;
         PlayAudioBox.IsChecked = settings.PlayAudioOnExtract;
@@ -250,6 +252,8 @@ public partial class SettingsWindow : Window
         if (!string.IsNullOrWhiteSpace(OutputBox.Text)) _settings.OutputDir = OutputBox.Text.Trim();
         _settings.UsmapPath = usmap;
         _settings.PreviewMeshes = PreviewMeshesBox.IsChecked == true;
+        _settings.ReadScriptData = ScriptDataBox.IsChecked == true;
+        _settings.ReadShaderMaps = ShaderMapsBox.IsChecked == true;
         SaveExportOptions();
         _settings.ConvertAudioToWav = AudioFormatBox.SelectedIndex != 1;
         _settings.PlayAudioOnExtract = PlayAudioBox.IsChecked == true;
