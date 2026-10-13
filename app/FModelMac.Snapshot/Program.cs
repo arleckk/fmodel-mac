@@ -1029,6 +1029,17 @@ async Task ViewerTestAsync(string outputDir, string[] packages)
             Console.WriteLine($"t={viewer.AnimationTime:0.00}s {viewer.EffectLayersShown} effect layer(s), markers: {string.Join("; ", viewer.MarkerLabelPositions.Select(m => $"{m.Label} @ {(m.Position is { } p ? $"{p.X:0},{p.Y:0}" : "off-screen")}"))}");
             continue;
         }
+        // "video[:<name>]" saves one cycle of the playing animation as <out>/<name>.mp4 (default "video")
+        if (package == "video" || package.StartsWith("video:"))
+        {
+            var videoPath = Path.Combine(outputDir, $"{(package.Length > 6 ? package[6..] : "video")}{(package.EndsWith(".mov") ? "" : ".mp4")}");
+            var videoWatch = System.Diagnostics.Stopwatch.StartNew();
+            var videoError = await viewer.RecordVideoAsync(videoPath);
+            Console.WriteLine(videoError is null
+                ? $"video {Path.GetFileName(videoPath)}: {new FileInfo(videoPath).Length / 1024} KB in {videoWatch.Elapsed.TotalSeconds:F1}s"
+                : $"video failed: {videoError}");
+            continue;
+        }
         if (package.StartsWith("play:"))
         {
             var seconds = double.Parse(package[5..], System.Globalization.CultureInfo.InvariantCulture);

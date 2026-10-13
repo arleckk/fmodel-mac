@@ -230,6 +230,12 @@ internal sealed unsafe class Gl
         fixed (byte* ptr = rgba) _readPixels(0, 0, w, h, RGBA, UNSIGNED_BYTE, ptr);
     }
 
+    /// <summary>The pixels in BGRA order, what video encoders take (bottom row first, like any GL read).</summary>
+    public void ReadPixelsBgra(int w, int h, Span<byte> bgra)
+    {
+        fixed (byte* ptr = bgra) _readPixels(0, 0, w, h, 0x80E1, UNSIGNED_BYTE, ptr);
+    }
+
     // ---------- Shaders ----------
 
     public int CompileProgram(string vertex, string fragment, params string[] attributes)

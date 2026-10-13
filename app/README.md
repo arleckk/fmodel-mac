@@ -173,6 +173,14 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
   `PopulateMorphTargetVerticesData()` de CUE4Parse los recupera.
   Los huesos se empatan por nombre, como en Snooper, y el skinning va en GPU con las matrices en
   una textura float (macOS no tiene SSBO).
+  **Save Video…** (junto a Save Screenshot, visible con una animación cargada) guarda un ciclo de
+  la animación en MP4 o MOV: H.264 a 60 fps, del tamaño del visor ajustado a 1920×1080, desde la
+  cámara actual y a la velocidad elegida (con **Loop** apagado agrega el cuadro final). Se renderiza
+  cuadro por cuadro fuera de pantalla, así que no se pierden cuadros aunque la escena sea pesada,
+  con los efectos y la cuadrícula/esqueleto según sus casillas (sin recuadro de selección ni
+  marcadores); con **Sounds** los sonidos de los notifies se mezclan en una pista AAC estéreo en su
+  tiempo. Lo codifica macOS (AVFoundation `AVAssetWriter`, por el runtime de Objective-C), sin
+  dependencias. Mientras graba el botón dice el avance y sirve para cancelar.
 - **Audio Player (Views › Audio Player):** como el de FModel: dispositivo de salida, volumen,
   codificación/duración/bytes por segundo, playlist con búsqueda (Play, Remove, Save, Save
   Playlist), reloj, anterior/play/siguiente, analizador de espectro de 75 barras y línea de tiempo
@@ -333,7 +341,7 @@ dotnet run -- --export <carpeta Paks> GAME_UE4_25 <AES> ./out 3
 # Abre el visor 3D real (OpenGL, necesita la pantalla encendida) y guarda capturas: mallas,
 # animaciones/blend spaces sobre la última malla, "morph:<nombre|*>=<peso>" para los sliders y
 # "anims", "anim:<nombre>", "seek:<seg>" y "play:<seg>" (lista de animaciones, notifies con sus efectos leídos,
-# capas de efecto dibujadas, marcadores y sonidos),
+# capas de efecto dibujadas, marcadores y sonidos), "video[:<nombre>[.mov]]" (graba un ciclo en <out>/video.mp4),
 # "normalmaps:off|on", "mode:orbit|fly", "key:W[+Shift]=<seg>" (mantiene la tecla y dice cuánto se movió la
 # cámara), "slider:SpeedX|SpeedY|SpeedZ|Rotation=<multiplicador>", "drag:dx,dy" y "hittest"; revisa el marco tangente, con FMODELMAC_MASKS=N lista las máscaras de un
 # mapa y captura un acercamiento al landscape con y sin texturas

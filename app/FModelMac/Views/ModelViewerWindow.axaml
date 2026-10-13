@@ -26,7 +26,11 @@
                     <CheckBox x:Name="WireframeToggle" Content="Wireframe" />
                     <CheckBox x:Name="BonesToggle" Content="Skeleton" IsEnabled="False" />
                 </StackPanel>
-                <Button DockPanel.Dock="Right" HorizontalAlignment="Right" Content="Save Screenshot…" Click="OnSaveScreenshotClick" />
+                <Button DockPanel.Dock="Right" Content="Save Screenshot…" Click="OnSaveScreenshotClick" />
+                <!-- One cycle of the playing animation, rendered frame by frame (with its effects and notify sounds) -->
+                <Button x:Name="SaveVideoButton" DockPanel.Dock="Right" HorizontalAlignment="Right" Margin="0,0,8,0" Content="Save Video…"
+                        IsVisible="{Binding #TimelineBar.IsVisible}" Click="OnSaveVideoClick"
+                        ToolTip.Tip="Save one cycle of the animation as an MP4 (1080p, 60 fps) from this camera, with its effects and, with Sounds on, its notify sounds" />
             </DockPanel>
         </Border>
 

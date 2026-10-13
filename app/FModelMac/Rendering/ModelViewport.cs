@@ -341,6 +341,10 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
     private bool _dragging;
 
     private TaskCompletionSource<byte[]>? _capture;
+    // A video frame to render at its own size, apart from the window's
+    private (int Width, int Height, TaskCompletionSource<byte[]> Done)? _videoFrame;
+    private int _videoFbo, _videoColorRb, _videoDepthRb, _videoResolveFbo, _videoResolveRb, _videoWidth, _videoHeight;
+    private bool _drawingVideo;
 
     static ModelViewport()
     {
@@ -356,6 +360,19 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
             e.Handled = true;
         });
         Scene.Items.CollectionChanged += (_, _) => RequestNextFrameRendering();
+    }
+
+    /// <summary>
+    /// Renders the next frame at <paramref name="width"/> × <paramref name="height"/> (any size, not the window's) for
+    /// a video: its BGRA pixels, top row first. Overlays (selection box, effect markers) are left out; the skeleton
+    /// and grid follow their toggles.
+    /// </summary>
+    public Task<byte[]> CaptureVideoFrameAsync(int width, int height)
+    {
+        var done = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _videoFrame = (width, height, done);
+        RequestNextFrameRendering();
+        return done.Task;
     }
 
     /// <summary>Renders the next frame and returns it as PNG (used by "Save Screenshot" and the test harness).</summary>
@@ -452,6 +469,9 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
         foreach (var id in _textures.Values) gl.DeleteTexture(id);
         _textures.Clear();
         ReleaseFramebuffer(gl);
+        ReleaseVideoFramebuffer(gl);
+        _videoFrame?.Done.TrySetException(new InvalidOperationException("The 3D viewer closed"));
+        _videoFrame = null;
         gl.DeleteVertexArray(_gridVao);
         gl.DeleteBuffer(_gridVbo);
         gl.DeleteVertexArray(_linesVao);
@@ -463,6 +483,8 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
         gl.DeleteTexture(_boneTexture);
         gl.DeleteProgram(_meshProgram);
         gl.DeleteProgram(_lineProgram);
+        gl.DeleteProgram(_spriteProgram);
+        _spriteProgram = _spriteVao = 0;
         _gridVao = _gridVbo = _linesVao = _linesVbo = _whiteTexture = _boneTexture = _meshProgram = _lineProgram = 0;
         _gridVersion = -1;
         _gl = null;
@@ -478,8 +500,46 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
 
         SyncScene(gl);
         EnsureFramebuffer(gl, width, height);
+        DrawView(gl, _fbo != 0 ? _fbo : fb, width, height);
 
-        gl.BindFramebuffer(Gl.FRAMEBUFFER, _fbo != 0 ? _fbo : fb);
+        if (_fbo != 0)
+        {
+            gl.BindFramebuffer(Gl.READ_FRAMEBUFFER, _fbo);
+            gl.BindFramebuffer(Gl.DRAW_FRAMEBUFFER, fb);
+            gl.BlitFramebuffer(width, height);
+            gl.BindFramebuffer(Gl.FRAMEBUFFER, fb);
+        }
+
+        if (_capture is { } capture)
+        {
+            _capture = null;
+            gl.BindFramebuffer(Gl.READ_FRAMEBUFFER, fb);
+            var pixels = new byte[width * height * 4];
+            gl.PixelStore(Gl.PACK_ALIGNMENT, 1);
+            gl.ReadPixels(width, height, pixels);
+            gl.BindFramebuffer(Gl.FRAMEBUFFER, fb);
+            Task.Run(() => capture.TrySetResult(EncodePng(pixels, width, height)));
+        }
+
+        if (_videoFrame is var (videoWidth, videoHeight, done))
+        {
+            _videoFrame = null;
+            try
+            {
+                done.TrySetResult(RenderVideoFrame(gl, videoWidth, videoHeight));
+            }
+            catch (Exception e)
+            {
+                done.TrySetException(e);
+            }
+            gl.BindFramebuffer(Gl.FRAMEBUFFER, fb);
+        }
+    }
+
+    // The scene, grid, effects and overlays from the current camera, into a framebuffer of that size
+    private void DrawView(Gl gl, int target, int width, int height)
+    {
+        gl.BindFramebuffer(Gl.FRAMEBUFFER, target);
         gl.Viewport(0, 0, width, height);
         gl.ClearColor(Background.X, Background.Y, Background.Z, 1);
         gl.Clear(Gl.COLOR_BUFFER_BIT | Gl.DEPTH_BUFFER_BIT);
@@ -500,25 +560,87 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
         if (ShowGrid && _gridVertexCount > 0) DrawGrid(gl, viewProjection);
         DrawEffects(gl, view, viewProjection);
         DrawOverlays(gl, viewProjection);
+    }
 
-        if (_fbo != 0)
+    // One video frame: drawn multisampled into framebuffers of the video's size, resolved and read back top row first
+    private byte[] RenderVideoFrame(Gl gl, int width, int height)
+    {
+        EnsureVideoFramebuffer(gl, width, height);
+        _drawingVideo = true;
+        try
         {
-            gl.BindFramebuffer(Gl.READ_FRAMEBUFFER, _fbo);
-            gl.BindFramebuffer(Gl.DRAW_FRAMEBUFFER, fb);
-            gl.BlitFramebuffer(width, height);
-            gl.BindFramebuffer(Gl.FRAMEBUFFER, fb);
+            DrawView(gl, _videoFbo, width, height);
         }
+        finally
+        {
+            _drawingVideo = false;
+        }
+        gl.BindFramebuffer(Gl.READ_FRAMEBUFFER, _videoFbo);
+        gl.BindFramebuffer(Gl.DRAW_FRAMEBUFFER, _videoResolveFbo);
+        gl.BlitFramebuffer(width, height);
+        gl.BindFramebuffer(Gl.READ_FRAMEBUFFER, _videoResolveFbo);
+        var pixels = new byte[width * height * 4];
+        gl.PixelStore(Gl.PACK_ALIGNMENT, 1);
+        gl.ReadPixelsBgra(width, height, pixels);
 
-        if (_capture is { } capture)
+        // GL reads bottom row first
+        var row = width * 4;
+        var swap = new byte[row];
+        for (int top = 0, bottom = height - 1; top < bottom; top++, bottom--)
         {
-            _capture = null;
-            gl.BindFramebuffer(Gl.READ_FRAMEBUFFER, fb);
-            var pixels = new byte[width * height * 4];
-            gl.PixelStore(Gl.PACK_ALIGNMENT, 1);
-            gl.ReadPixels(width, height, pixels);
-            gl.BindFramebuffer(Gl.FRAMEBUFFER, fb);
-            Task.Run(() => capture.TrySetResult(EncodePng(pixels, width, height)));
+            var a = pixels.AsSpan(top * row, row);
+            var b = pixels.AsSpan(bottom * row, row);
+            a.CopyTo(swap);
+            b.CopyTo(a);
+            swap.CopyTo(b);
         }
+        return pixels;
+    }
+
+    private void EnsureVideoFramebuffer(Gl gl, int width, int height)
+    {
+        if (_videoFbo != 0 && width == _videoWidth && height == _videoHeight) return;
+        ReleaseVideoFramebuffer(gl);
+        var samples = Math.Max(_samples, 0);
+
+        _videoFbo = gl.GenFramebuffer();
+        gl.BindFramebuffer(Gl.FRAMEBUFFER, _videoFbo);
+        _videoColorRb = gl.GenRenderbuffer();
+        gl.BindRenderbuffer(_videoColorRb);
+        gl.RenderbufferStorageMultisample(samples, Gl.RGBA8, width, height);
+        gl.FramebufferRenderbuffer(Gl.COLOR_ATTACHMENT0, _videoColorRb);
+        _videoDepthRb = gl.GenRenderbuffer();
+        gl.BindRenderbuffer(_videoDepthRb);
+        gl.RenderbufferStorageMultisample(samples, Gl.DEPTH_COMPONENT24, width, height);
+        gl.FramebufferRenderbuffer(Gl.DEPTH_ATTACHMENT, _videoDepthRb);
+        var complete = gl.CheckFramebufferStatus() == Gl.FRAMEBUFFER_COMPLETE;
+
+        _videoResolveFbo = gl.GenFramebuffer();
+        gl.BindFramebuffer(Gl.FRAMEBUFFER, _videoResolveFbo);
+        _videoResolveRb = gl.GenRenderbuffer();
+        gl.BindRenderbuffer(_videoResolveRb);
+        gl.RenderbufferStorageMultisample(0, Gl.RGBA8, width, height);
+        gl.FramebufferRenderbuffer(Gl.COLOR_ATTACHMENT0, _videoResolveRb);
+        complete &= gl.CheckFramebufferStatus() == Gl.FRAMEBUFFER_COMPLETE;
+        gl.BindRenderbuffer(0);
+
+        if (!complete)
+        {
+            ReleaseVideoFramebuffer(gl);
+            throw new InvalidOperationException($"Can't render {width}×{height} frames on this GPU");
+        }
+        _videoWidth = width;
+        _videoHeight = height;
+    }
+
+    private void ReleaseVideoFramebuffer(Gl gl)
+    {
+        gl.DeleteFramebuffer(_videoFbo);
+        gl.DeleteRenderbuffer(_videoColorRb);
+        gl.DeleteRenderbuffer(_videoDepthRb);
+        gl.DeleteFramebuffer(_videoResolveFbo);
+        gl.DeleteRenderbuffer(_videoResolveRb);
+        _videoFbo = _videoColorRb = _videoDepthRb = _videoResolveFbo = _videoResolveRb = _videoWidth = _videoHeight = 0;
     }
 
     private Vector3 Forward => new(MathF.Cos(_pitch) * MathF.Sin(_yaw), MathF.Sin(_pitch), MathF.Cos(_pitch) * MathF.Cos(_yaw));
@@ -787,7 +909,7 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
         void Line(Vector3 a, Vector3 b, Vector3 color) =>
             data.AddRange([a.X, a.Y, a.Z, color.X, color.Y, color.Z, b.X, b.Y, b.Z, color.X, color.Y, color.Z]);
 
-        if (Selected is { IsVisible: true } selected && Scene.Items.Contains(selected) && Scene.Items.Count(i => i.IsVisible) > 1)
+        if (!_drawingVideo && Selected is { IsVisible: true } selected && Scene.Items.Contains(selected) && Scene.Items.Count(i => i.IsVisible) > 1)
         {
             Vector3 lo = selected.Min, hi = selected.Max;
             Vector3 Corner(int i) => new((i & 1) == 0 ? lo.X : hi.X, (i & 2) == 0 ? lo.Y : hi.Y, (i & 4) == 0 ? lo.Z : hi.Z);
@@ -807,7 +929,7 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
                 Line(Vector3.Transform(globals[i].Translation, placement), Vector3.Transform(globals[bones[i].ParentIndex].Translation, placement), color);
             }
         }
-        DrawEffectMarkers(Line, viewProjection);
+        if (!_drawingVideo) DrawEffectMarkers(Line, viewProjection);
         if (data.Count == 0) return;
 
         gl.Disable(Gl.DEPTH_TEST);
