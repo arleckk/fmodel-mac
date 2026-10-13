@@ -185,6 +185,7 @@ public sealed partial class MainViewModel : ObservableObject
             StatusExtra = $"{game} · {_archive.MountedCount}/{total} archives";
             UpdateTitle();
             SetStatus(StatusKind.Ready, "Ready");
+            LoadFavorites(_archive.ProjectName);
             remount = ApplyEndpointPreset(_archive.ProjectName);
         }
         catch (Exception e)
@@ -300,6 +301,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void ResetGame()
     {
+        Favorites.Clear();
         ExportSession.Clear();
         References = null;
         Archives.Clear();
@@ -309,6 +311,74 @@ public sealed partial class MainViewModel : ObservableObject
         _archive?.Dispose();
         _archive = null;
         StatusExtra = "";
+    }
+
+    // ---------- Favorite Directories (FModel's custom directories) ----------
+
+    /// <summary>The current game's favorite directories, as shown in Packages › Favorite Directories.</summary>
+    public ObservableCollection<FavoriteDirectory> Favorites { get; } = [];
+
+    // A game directory gets FModel's presets the first time it's mounted, then the list is the user's
+    private void LoadFavorites(string projectName)
+    {
+        var key = Settings.ArchiveDir ?? "";
+        if (!Settings.FavoriteDirectories.TryGetValue(key, out var list))
+        {
+            Settings.FavoriteDirectories[key] = list = FavoriteDirectory.Presets(projectName);
+            SaveSettings();
+        }
+        Favorites.Clear();
+        foreach (var favorite in list) Favorites.Add(favorite);
+    }
+
+    private void SaveFavorites()
+    {
+        Settings.FavoriteDirectories[Settings.ArchiveDir ?? ""] = Favorites.ToList();
+        SaveSettings();
+    }
+
+    public void AddFavorite(FavoriteDirectory favorite)
+    {
+        Favorites.Add(favorite);
+        SaveFavorites();
+        Log(LogKind.Information, $"Added '{favorite.Header}' to Favorite Directories");
+    }
+
+    public void ReplaceFavorite(FavoriteDirectory old, FavoriteDirectory updated)
+    {
+        var index = Favorites.IndexOf(old);
+        if (index < 0) return;
+        Favorites[index] = updated;
+        SaveFavorites();
+    }
+
+    public void RemoveFavorite(FavoriteDirectory favorite)
+    {
+        if (!Favorites.Remove(favorite)) return;
+        SaveFavorites();
+    }
+
+    /// <summary>Whether the mounted game has files under this folder.</summary>
+    public bool FolderExists(string path)
+    {
+        if (_archive is null) return false;
+        var prefix = FavoriteDirectory.Normalize(path) + "/";
+        return _archive.Provider.Files.Keys.Any(k => k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>FModel's GoToCommand: shows a folder in the Folders tab, loading every archive first if needed.</summary>
+    public async Task<bool> GoToFolderAsync(string path)
+    {
+        if (_archive is null) return false;
+        if (Folders.VisibleFolders.Count == 0) await Load(null);
+        path = FavoriteDirectory.Normalize(path);
+        if (NavigateToFolder(path) is null)
+        {
+            Log(LogKind.Warning, $"There is no folder '{path}' in the loaded archives");
+            return false;
+        }
+        SelectedLeftTab = 1;
+        return true;
     }
 
     public void SaveSettings()

@@ -76,7 +76,7 @@
                 <MenuItem Header="References" InputGesture="Cmd+Shift+R" HotKey="Cmd+Shift+R" Click="OnReferencesClick" IsEnabled="{Binding IsReady}">
                     <MenuItem.Icon><c:Glyph Data="{StaticResource SearchIcon}" /></MenuItem.Icon>
                 </MenuItem>
-                <MenuItem Header="Favorite Directories" IsEnabled="False">
+                <MenuItem x:Name="FavoritesMenu" Header="Favorite Directories" IsEnabled="{Binding IsReady}">
                     <MenuItem.Icon><c:Glyph Data="{StaticResource DirectoriesIcon}" /></MenuItem.Icon>
                 </MenuItem>
             </MenuItem>
@@ -209,6 +209,16 @@
                                      ItemsSource="{Binding Folders.VisibleFolders}"
                                      SelectedItem="{Binding Folders.SelectedFolder}"
                                      DoubleTapped="OnFolderDoubleTapped">
+                                <ListBox.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Favorite Directory" Click="OnFavoriteFolderClick">
+                                            <MenuItem.Icon><c:Glyph Data="{StaticResource DirectoriesAddIcon}" /></MenuItem.Icon>
+                                        </MenuItem>
+                                        <MenuItem Header="Copy Directory Path" Click="OnCopyFolderPathClick">
+                                            <MenuItem.Icon><c:Glyph Data="{StaticResource CopyIcon}" /></MenuItem.Icon>
+                                        </MenuItem>
+                                    </ContextMenu>
+                                </ListBox.ContextMenu>
                                 <ListBox.ItemTemplate>
                                     <DataTemplate x:DataType="vm:FolderNode">
                                         <Grid ColumnDefinitions="Auto,Auto,*" Margin="{Binding Indent}" Background="Transparent"

@@ -38,8 +38,14 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
 `#32323F`, `#262630`…) y sus acentos (`#206BD4` listo, `#D49220` cargando, `#C22B2B` error).
 
 - **Menú:** Directory (Selector, AES, Archives Info), Packages (Search ⌘⇧F, References ⌘⇧R),
-  Views, Settings, Help. Lo que todavía no existe en macOS (Backup, Favorite Directories,
-  Image Merger) aparece deshabilitado.
+  Views, Settings, Help. Lo que todavía no existe en macOS (Backup, Image Merger) aparece
+  deshabilitado.
+- **Favorite Directories (Packages › Favorite Directories):** atajos a carpetas, guardados por
+  carpeta del juego, como en FModel: Add Directory… y, por cada uno, Go To / Edit Directory… /
+  Delete Directory. Go To carga los archives si hace falta y abre la carpeta en Folders. Al montar
+  un juego por primera vez se agregan los presets de FModel (Fortnite, VALORANT, Dead by Daylight).
+  El árbol de Folders tiene menú contextual con "Favorite Directory" y "Copy Directory Path"; el
+  diálogo avisa si la carpeta no existe en el juego cargado.
 - **Panel izquierdo, pestaña Archives:** Loading Mode (Multiple/All) + Load, lista GAME ARCHIVES
   (los bloqueados salen en gris) e INFORMATION del contenedor seleccionado.
 - **Folders:** árbol aplanado y virtualizado con los íconos de carpeta de FModel, contador café de

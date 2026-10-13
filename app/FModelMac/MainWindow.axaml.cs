@@ -7,6 +7,7 @@ using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using CUE4Parse.FileProvider.Objects;
 using FModelMac.Rendering;
+using FModelMac.Services;
 using FModelMac.Services.Audio;
 using FModelMac.ViewModels;
 using FModelMac.Views;
@@ -42,6 +43,7 @@ public partial class MainWindow : Window
             _vm.MapReady -= OnMapReady;
             _vm.SoundsReady -= OnSoundsReady;
             _vm.ReferencesReady -= OnReferencesReady;
+            _vm.Favorites.CollectionChanged -= OnFavoritesChanged;
             _vm.AnimationReady = null;
         }
 
@@ -49,6 +51,8 @@ public partial class MainWindow : Window
         if (_vm is null) return;
 
         _vm.SetClipboardText = text => Clipboard?.SetTextAsync(text) ?? Task.CompletedTask;
+        _vm.Favorites.CollectionChanged += OnFavoritesChanged;
+        BuildFavoritesMenu();
         _vm.PropertyChanged += OnViewModelPropertyChanged;
         _vm.Logs.CollectionChanged += OnLogsChanged;
         _vm.ModelReady += OnModelReady;
@@ -216,6 +220,57 @@ public partial class MainWindow : Window
 
     /// <summary>The open Audio Player window, if any (for the test harness).</summary>
     public AudioPlayerWindow? AudioPlayerView => _audioPlayer is { IsVisible: true } window ? window : null;
+
+    // ---------- Packages › Favorite Directories (FModel's custom directories) ----------
+
+    private void OnFavoritesChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e) => BuildFavoritesMenu();
+
+    // FModel's layout: "Add Directory", a separator, then each favorite with Go To / Edit / Delete
+    private void BuildFavoritesMenu()
+    {
+        static MenuItem Item(string header, string icon, EventHandler<RoutedEventArgs> click)
+        {
+            var item = new MenuItem { Header = header, Icon = new Controls.Glyph { Data = (Avalonia.Media.Geometry) Application.Current!.FindResource(icon)! } };
+            item.Click += click;
+            return item;
+        }
+
+        var items = new List<Control> { Item("Add Directory…", "DirectoriesAddIcon", async (_, _) => await EditFavoriteAsync(null)) };
+        if (Vm.Favorites.Count > 0) items.Add(new Separator());
+        foreach (var favorite in Vm.Favorites)
+        {
+            var entry = new MenuItem { Header = favorite.Header.Replace("_", "__") }; // '_' marks an access key
+            ToolTip.SetTip(entry, favorite.Path);
+            entry.ItemsSource = new[]
+            {
+                Item("Go To", "GoToIcon", async (_, _) => await Vm.GoToFolderAsync(favorite.Path)),
+                Item("Edit Directory…", "EditIcon", async (_, _) => await EditFavoriteAsync(favorite)),
+                Item("Delete Directory", "RemoveIcon", (_, _) => Vm.RemoveFavorite(favorite))
+            };
+            items.Add(entry);
+        }
+        FavoritesMenu.ItemsSource = items;
+    }
+
+    private async Task EditFavoriteAsync(FavoriteDirectory? favorite)
+    {
+        // A new favorite starts from the selected folder, if any
+        var start = favorite ?? (Vm.SelectedFolder is { } folder ? new FavoriteDirectory(folder.Name, folder.FullPath) : new FavoriteDirectory());
+        var dialog = new FavoriteDirectoryWindow(start, Vm.FolderExists);
+        if (!await dialog.ShowDialog<bool>(this) || dialog.Result is not { } result) return;
+        if (favorite is null) Vm.AddFavorite(result);
+        else Vm.ReplaceFavorite(favorite, result);
+    }
+
+    private void OnFavoriteFolderClick(object? sender, RoutedEventArgs e)
+    {
+        if (Vm.SelectedFolder is { } folder) Vm.AddFavorite(new FavoriteDirectory(folder.Name, folder.FullPath));
+    }
+
+    private async void OnCopyFolderPathClick(object? sender, RoutedEventArgs e)
+    {
+        if (Vm.SelectedFolder is { } folder && Clipboard is { } clipboard) await clipboard.SetTextAsync(folder.FullPath);
+    }
 
     private ExportSessionWindow? _exportSession;
 

@@ -785,6 +785,27 @@ async Task RunAsync()
         Save(window, "10-decompiled.png");
     }
 
+    // Favorite Directories: add, go to (found and missing), persisted, menu built, dialog
+    var presetsBefore = vm.Favorites.Count;
+    vm.AddFavorite(new FavoriteDirectory("Textures", "CUE4ParseFixtures/Content/Fixtures/Textures/"));
+    vm.AddFavorite(new FavoriteDirectory("Missing", "CUE4ParseFixtures/Content/Nope"));
+    vm.SelectedLeftTab = 0;
+    var found = await vm.GoToFolderAsync(vm.Favorites[^2].Path);
+    var foundTab = vm.SelectedLeftTab;
+    var missing = await vm.GoToFolderAsync(vm.Favorites[^1].Path);
+    var saved = AppSettings.Load().FavoriteDirectories.Values.Sum(l => l.Count);
+    var menu = window.FindControl<MenuItem>("FavoritesMenu")!.ItemsSource!.Cast<object>().Count();
+    Console.WriteLine($"Favorites: {presetsBefore} preset(s) for this game, Fortnite {FavoriteDirectory.Presets("FortniteGame").Count}, " +
+                      $"VALORANT {FavoriteDirectory.Presets("ShooterGame").Count} | go to '{vm.Favorites[^2].Path}': {found}, tab {foundTab}, " +
+                      $"folder '{vm.SelectedFolder?.FullPath}' | missing: {missing} ({vm.Logs[^1].Message}) | saved {saved} | menu items {menu}");
+    var favoriteDialog = new FavoriteDirectoryWindow(new FavoriteDirectory("Meshes", "CUE4ParseFixtures/Content/Fixtures/Meshes"), vm.FolderExists);
+    favoriteDialog.Show();
+    await Task.Delay(200);
+    Save(favoriteDialog, "14-favorite-directory.png");
+    favoriteDialog.Close();
+    vm.RemoveFavorite(vm.Favorites[^1]);
+    Console.WriteLine($"After delete: {vm.Favorites.Count} favorite(s), menu items {window.FindControl<MenuItem>("FavoritesMenu")!.ItemsSource!.Cast<object>().Count()}");
+
     // Export Session: queue meshes, textures, an animation and a world, then export them together
     vm.Settings.ExportImmediately = false;
     async Task Queue(IAsyncRelayCommand<System.Collections.IList?> command, params string[] names) =>

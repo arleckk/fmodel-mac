@@ -36,6 +36,9 @@ public sealed class AppSettings
     [JsonIgnore]
     public ELanguage AssetLanguageValue => Enum.TryParse<ELanguage>(AssetLanguage, out var value) ? value : ELanguage.English;
 
+    /// <summary>FModel's Favorite Directories, per game directory (null until the game is first mounted).</summary>
+    public Dictionary<string, List<FavoriteDirectory>> FavoriteDirectories { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Versioning configuration per game directory, like FModel's per-directory settings.</summary>
     public Dictionary<string, VersioningSettings> Versioning { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
