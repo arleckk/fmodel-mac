@@ -65,6 +65,7 @@ public partial class MainWindow : Window
         _vm.MergerImageAdded += OnMergerImageAdded;
         _vm.Favorites.CollectionChanged += OnFavoritesChanged;
         BuildFavoritesMenu();
+        BuildProfilesMenu();
         _vm.PropertyChanged += OnViewModelPropertyChanged;
         _vm.Logs.CollectionChanged += OnLogsChanged;
         _vm.ModelReady += OnModelReady;
@@ -140,14 +141,49 @@ public partial class MainWindow : Window
 
     private async void OnDirectorySelectorClick(object? sender, RoutedEventArgs e) => await ShowDirectorySelectorAsync();
 
-    private async Task ShowDirectorySelectorAsync()
+    private async Task ShowDirectorySelectorAsync() => await ShowDirectorySelectorAsync(newProfile: false);
+
+    private async Task ShowDirectorySelectorAsync(bool newProfile)
     {
-        var dialog = new DirectorySelectorWindow(Vm.Settings);
-        if (await dialog.ShowDialog<bool>(this))
+        var dialog = new DirectorySelectorWindow(Vm.Settings, newProfile);
+        var ok = await dialog.ShowDialog<bool>(this);
+        BuildProfilesMenu();
+        if (!ok) return;
+        Vm.SaveSettings();
+        await Vm.InitializeGameAsync();
+    }
+
+    // Directory › Profiles: one item per saved game (the current one checked), then New / Edit
+    private void BuildProfilesMenu()
+    {
+        if (_vm is null) return;
+        var items = new List<Control>();
+        foreach (var profile in _vm.Settings.Profiles.OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase))
         {
-            Vm.SaveSettings();
-            await Vm.InitializeGameAsync();
+            var current = profile == _vm.Settings.ActiveProfile;
+            var item = new MenuItem
+            {
+                Header = profile.Name,
+                ToggleType = MenuItemToggleType.Radio,
+                IsChecked = current,
+                GroupName = "profiles"
+            };
+            ToolTip.SetTip(item, $"{profile.ArchiveDir}\n{profile.Summary}");
+            item.Click += async (_, _) =>
+            {
+                await Vm.SwitchProfileAsync(profile);
+                BuildProfilesMenu();
+            };
+            items.Add(item);
         }
+        if (items.Count > 0) items.Add(new Separator());
+        var add = new MenuItem { Header = "New Profile…" };
+        add.Click += async (_, _) => await ShowDirectorySelectorAsync(newProfile: true);
+        var edit = new MenuItem { Header = "Edit Profiles…" };
+        edit.Click += async (_, _) => await ShowDirectorySelectorAsync(newProfile: false);
+        items.Add(add);
+        items.Add(edit);
+        ProfilesMenu.ItemsSource = items;
     }
 
     private async void OnAesManagerClick(object? sender, RoutedEventArgs e)

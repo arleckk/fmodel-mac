@@ -38,11 +38,23 @@ else
     echo "warning: vgmstream-cli not bundled (run packaging/build-vgmstream.sh); audio will need Homebrew's vgmstream" >&2
 fi
 
+# unluac (compiled Lua) ships inside the app when packaging/build-unluac.sh was run
+if [[ ! -f "$PUBLISH_DIR/libunluac.dylib" ]]; then
+    echo "warning: libunluac.dylib not bundled (run packaging/build-unluac.sh); Lua chunks won't be decompiled" >&2
+fi
+
 echo "==> Assembling $BUNDLE"
 rm -rf "$BUNDLE"
 mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 cp -R "$PUBLISH_DIR/." "$BUNDLE/Contents/MacOS/"
 cp "$PACKAGING_DIR/$APP_NAME.icns" "$BUNDLE/Contents/Resources/$APP_NAME.icns"
+
+# unluac is MIT: its notice ships with it
+UNLUAC_LICENSE="$APP_ROOT/../vendor/unluac-build/LICENSE-unluac.txt"
+if [[ -f "$BUNDLE/Contents/MacOS/libunluac.dylib" && -f "$UNLUAC_LICENSE" ]]; then
+    mkdir -p "$BUNDLE/Contents/Resources/Licenses/unluac"
+    cp "$UNLUAC_LICENSE" "$BUNDLE/Contents/Resources/Licenses/unluac/LICENSE.txt"
+fi
 
 # Licenses of what vgmstream-cli links statically (FFmpeg and mpg123 are LGPL: their notices must ship with it)
 VGM_SRC="$APP_ROOT/../vendor/vgmstream-src"

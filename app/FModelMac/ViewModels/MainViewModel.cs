@@ -411,8 +411,29 @@ public sealed partial class MainViewModel : ObservableObject
         catch (Exception e) { Serilog.Log.Warning(e, "Could not save settings"); }
     }
 
-    private void UpdateTitle() =>
-        Title = _archive is null ? $"FModelMac ({Version})" : $"FModelMac ({Version}) - {_archive.ProjectName}";
+    private void UpdateTitle()
+    {
+        var profile = Settings.CurrentProfile;
+        var project = _archive?.ProjectName is { Length: > 0 } mounted ? mounted : null;
+        var name = profile is null ? project
+            : project is null || project.Equals(profile, StringComparison.OrdinalIgnoreCase) ? profile : $"{profile} ({project})";
+        Title = name is null ? $"FModelMac ({Version})" : $"FModelMac ({Version}) - {name}";
+    }
+
+    /// <summary>Directory › Profiles: saves the current game and mounts another saved one, as it was left.</summary>
+    public async Task SwitchProfileAsync(GameProfile profile)
+    {
+        if (IsBusy || profile == Settings.ActiveProfile) return;
+        if (profile.ArchiveDir is not { } dir || !Directory.Exists(dir))
+        {
+            Log(LogKind.Error, $"Profile '{profile.Name}': the directory '{profile.ArchiveDir}' doesn't exist anymore (Directory › Selector to fix it)");
+            return;
+        }
+        Settings.ApplyProfile(profile);
+        SaveSettings();
+        Log(LogKind.Information, $"Switched to profile '{profile.Name}' ({profile.Summary})");
+        await InitializeGameAsync();
+    }
 
     // ---------- Archives tab: Loading Mode + Load ----------
 
@@ -625,13 +646,15 @@ public sealed partial class MainViewModel : ObservableObject
         try
         {
             var sounds = _sounds;
-            var result = await Task.Run(() => AssetPreview.Build(provider, file, cts.Token, sounds), cts.Token);
+            var lua = Settings.DecompileLua ? LuaOptions.From(Settings) : null;
+            var result = await Task.Run(() => AssetPreview.Build(provider, file, cts.Token, sounds, lua), cts.Token);
             var image = result.Image is null ? null : await Task.Run(() => new Bitmap(new MemoryStream(result.Image)), cts.Token);
             if (cts.IsCancellationRequested) return;
 
             tab.Apply(result, image);
             SetStatus(StatusKind.Completed, "Completed");
             foreach (var warning in result.SoundWarnings ?? []) Log(LogKind.Warning, warning);
+            if (result.Warning is { } previewWarning) Log(LogKind.Warning, previewWarning);
             if (result.Sounds is { Count: > 0 } found)
             {
                 Log(LogKind.Information, found.Count == 1

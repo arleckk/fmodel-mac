@@ -15,6 +15,7 @@
     <UpstreamDir>$(MSBuildThisFileDirectory)../../upstream/</UpstreamDir>
     <OodleDylib>$(MSBuildThisFileDirectory)../../oodle-src/build/builds/macos/lib/liboodle-data-shared.dylib</OodleDylib>
     <VgmstreamCli>$(MSBuildThisFileDirectory)../../vendor/vgmstream-build/vgmstream-cli</VgmstreamCli>
+    <UnluacDylib>$(MSBuildThisFileDirectory)../../vendor/unluac-build/libunluac.dylib</UnluacDylib>
   </PropertyGroup>
 
   <ItemGroup>
@@ -48,6 +49,10 @@
     </None>
     <!-- vgmstream built with static, decoder-only dependencies (packaging/build-vgmstream.sh) -->
     <None Include="$(VgmstreamCli)" Condition="Exists('$(VgmstreamCli)')" Link="vgmstream-cli">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- FModel's unluac built for macOS with GraalVM Native Image (packaging/build-unluac.sh) -->
+    <None Include="$(UnluacDylib)" Condition="Exists('$(UnluacDylib)')" Link="libunluac.dylib">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

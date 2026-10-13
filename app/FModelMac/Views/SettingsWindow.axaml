@@ -5,7 +5,7 @@
         xmlns:ae="using:AvaloniaEdit"
         x:Class="FModelMac.Views.SettingsWindow"
         Title="Settings"
-        Width="700" Height="620" CanResize="False"
+        Width="760" Height="620" CanResize="False"
         WindowStartupLocation="CenterOwner">
     <DockPanel>
         <Border DockPanel.Dock="Bottom" Background="{StaticResource Layer1BackgroundBrush}">
@@ -113,6 +113,36 @@
                         <ScrollViewer HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
                             <StackPanel x:Name="HotkeysPanel" />
                         </ScrollViewer>
+                    </DockPanel>
+                </Border>
+            </TabItem>
+
+            <!-- LUA: FModel's Settings › Unluac -->
+            <TabItem Header="Lua">
+                <Border Background="{StaticResource Layer2BackgroundBrush}" Padding="10">
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Top">
+                            <c:SectionSeparator Text="UNLUAC" Margin="0,0,0,8" />
+                            <CheckBox x:Name="DecompileLuaBox" Margin="160,0,0,0" Content="Decompile Lua" />
+                            <Grid ColumnDefinitions="150,10,*" Margin="0,8,0,0">
+                                <TextBlock Text="Mode" VerticalAlignment="Center" />
+                                <ComboBox x:Name="LuaModeBox" Grid.Column="2" HorizontalAlignment="Stretch">
+                                    <ComboBoxItem Content="Decompile (Lua source)" />
+                                    <ComboBoxItem Content="Disassemble (unluac assembly)" />
+                                </ComboBox>
+                            </Grid>
+                            <StackPanel Orientation="Horizontal" Spacing="18" Margin="160,8,0,0">
+                                <CheckBox x:Name="LuaRawStringBox" Content="Raw string" ToolTip.Tip="Keep strings' bytes as they are instead of escaping them" />
+                                <CheckBox x:Name="LuaNoDebugBox" Content="No debug" ToolTip.Tip="Ignore the debug information (local names) of the chunk" />
+                                <CheckBox x:Name="LuaLuajBox" Content="LuaJ" ToolTip.Tip="Chunks compiled by LuaJ" />
+                            </StackPanel>
+                            <TextBlock x:Name="LuaStatusText" Classes="dim" FontSize="11" Margin="160,6,0,0" TextWrapping="Wrap" />
+                            <c:SectionSeparator Text="OPCODE MAP (THIS GAME)" />
+                        </StackPanel>
+                        <TextBlock DockPanel.Dock="Bottom" Classes="dim" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap"
+                                   Text="For games that shuffle Lua's opcodes: unluac's .op format, one '.op &lt;number&gt; &lt;name&gt;' per line. Saved for the current game directory, like FModel. Leave empty for standard Lua." />
+                        <TextBox x:Name="LuaOpCodeMapBox" AcceptsReturn="True" TextWrapping="NoWrap" FontFamily="Menlo, monospace" FontSize="12"
+                                 VerticalContentAlignment="Top" Watermark=".op 0 move&#x0a;.op 1 loadk&#x0a;…" />
                     </DockPanel>
                 </Border>
             </TabItem>

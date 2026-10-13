@@ -126,6 +126,66 @@ public sealed class AppSettings
 
     public HotkeySettings Hotkeys { get; set; } = new();
 
+    // FModel's "Decompile Lua" and Settings › Unluac (the opcode map is per game directory, like FModel)
+    public bool DecompileLua { get; set; } = true;
+    [JsonConverter(typeof(StringEnumConverter))]
+    public LuaMode LuaMode { get; set; } = LuaMode.Decompile;
+    public bool LuaRawString { get; set; }
+    public bool LuaNoDebug { get; set; }
+    public bool LuaLuaj { get; set; }
+    public Dictionary<string, string> LuaOpCodeMaps { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    [JsonIgnore]
+    public string? CurrentLuaOpCodeMap
+    {
+        get => LuaOpCodeMaps.GetValueOrDefault(ArchiveDir ?? "");
+        set
+        {
+            if (string.IsNullOrWhiteSpace(value)) LuaOpCodeMaps.Remove(ArchiveDir ?? "");
+            else LuaOpCodeMaps[ArchiveDir ?? ""] = value;
+        }
+    }
+
+    /// <summary>
+    /// Saved games (Directory › Profiles): each keeps its directory, UE version, keys, mappings, endpoints and
+    /// language. The top-level fields are the active profile's; <see cref="Save"/> writes them back to it.
+    /// Everything already kept per game directory (versioning, favorites, opcode maps…) follows the directory.
+    /// </summary>
+    public List<GameProfile> Profiles { get; set; } = [];
+    public string? CurrentProfile { get; set; }
+
+    [JsonIgnore]
+    public GameProfile? ActiveProfile => Profiles.FirstOrDefault(p => p.Name == CurrentProfile);
+
+    public GameProfile? FindProfile(string? name) =>
+        Profiles.FirstOrDefault(p => string.Equals(p.Name, name?.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>A profile from the current game settings.</summary>
+    public GameProfile CaptureProfile(string name)
+    {
+        var profile = new GameProfile { Name = name.Trim() };
+        profile.CopyFrom(this);
+        return profile;
+    }
+
+    /// <summary>Makes <paramref name="profile"/> the current game (the caller mounts it).</summary>
+    public void ApplyProfile(GameProfile profile)
+    {
+        SyncActiveProfile();
+        ArchiveDir = profile.ArchiveDir;
+        Game = profile.Game;
+        AesKey = profile.AesKey;
+        DynamicKeys = new Dictionary<string, string>(profile.DynamicKeys, StringComparer.OrdinalIgnoreCase);
+        UsmapPath = profile.UsmapPath;
+        AesEndpoint = profile.AesEndpoint?.Clone();
+        MappingEndpoint = profile.MappingEndpoint?.Clone();
+        AssetLanguage = profile.AssetLanguage;
+        CurrentProfile = profile.Name;
+    }
+
+    /// <summary>Writes the current game settings back to the active profile.</summary>
+    public void SyncActiveProfile() => ActiveProfile?.CopyFrom(this);
+
     public int ImageMergerMargin { get; set; } = 5;
     // FModel's "Serialize Script Bytecode" / "Serialize Inlined Shader Maps": extra data in the properties JSON
     public bool ReadScriptData { get; set; }
@@ -162,7 +222,7 @@ public sealed class AppSettings
         try
         {
             if (File.Exists(FilePath))
-                return JsonConvert.DeserializeObject<AppSettings>(File.ReadAllText(FilePath)) ?? new AppSettings();
+                return (JsonConvert.DeserializeObject<AppSettings>(File.ReadAllText(FilePath)) ?? new AppSettings()).WithProfile();
         }
         catch (Exception e)
         {
@@ -171,8 +231,22 @@ public sealed class AppSettings
         return new AppSettings();
     }
 
+    // Settings from before profiles: the configured game becomes the first one
+    private AppSettings WithProfile()
+    {
+        if (Profiles.Count == 0 && !string.IsNullOrWhiteSpace(ArchiveDir))
+        {
+            var profile = CaptureProfile(GameProfile.SuggestName(ArchiveDir));
+            Profiles.Add(profile);
+            CurrentProfile = profile.Name;
+        }
+        else if (ActiveProfile is null) CurrentProfile = null;
+        return this;
+    }
+
     public void Save()
     {
+        SyncActiveProfile();
         Directory.CreateDirectory(DataDirectory);
         File.WriteAllText(FilePath, JsonConvert.SerializeObject(this, Formatting.Indented));
     }
@@ -182,6 +256,45 @@ public sealed class AppSettings
         var args = File.Exists(path) ? new[] { "-R", path } : [path];
         Process.Start(new ProcessStartInfo("open", args) { UseShellExecute = false });
     }
+}
+
+/// <summary>A saved game: what it takes to mount it again exactly as it was.</summary>
+public sealed class GameProfile
+{
+    public string Name { get; set; } = "";
+    public string? ArchiveDir { get; set; }
+    public string Game { get; set; } = "GAME_UE5_LATEST";
+    public string? AesKey { get; set; }
+    public Dictionary<string, string> DynamicKeys { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public string? UsmapPath { get; set; }
+    public EndpointConfig? AesEndpoint { get; set; }
+    public EndpointConfig? MappingEndpoint { get; set; }
+    public string AssetLanguage { get; set; } = nameof(ELanguage.English);
+
+    public void CopyFrom(AppSettings settings)
+    {
+        ArchiveDir = settings.ArchiveDir;
+        Game = settings.Game;
+        AesKey = settings.AesKey;
+        DynamicKeys = new Dictionary<string, string>(settings.DynamicKeys, StringComparer.OrdinalIgnoreCase);
+        UsmapPath = settings.UsmapPath;
+        AesEndpoint = settings.AesEndpoint?.Clone();
+        MappingEndpoint = settings.MappingEndpoint?.Clone();
+        AssetLanguage = settings.AssetLanguage;
+    }
+
+    /// <summary>A name for a new profile from its directory: the game folder above Content/Paks.</summary>
+    public static string SuggestName(string? archiveDir)
+    {
+        string[] generic = ["paks", "content", "client", "game", "windowsnoeditor", "windows", "win64", "android", "ios", "obb", "extracted"];
+        var parts = (archiveDir ?? "").TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Reverse().FirstOrDefault(p => !generic.Contains(p.ToLowerInvariant())) ?? "Game";
+    }
+
+    [JsonIgnore]
+    public string Summary => $"{Game} · {(string.IsNullOrEmpty(AesKey) ? "no AES key" : "AES key")}" +
+                             $"{(DynamicKeys.Count > 0 ? $" + {DynamicKeys.Count} dynamic" : "")}" +
+                             $" · {(UsmapPath is { Length: > 0 } ? Path.GetFileName(UsmapPath) : MappingEndpoint is { IsUsable: true } ? "mapping endpoint" : "no mappings")}";
 }
 
 public enum AesReload

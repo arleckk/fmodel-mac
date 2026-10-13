@@ -28,6 +28,10 @@ Genera `app/dist/FModelMac.app` (~180 MB): publicación autocontenida para `osx-
   sobre la plantilla de íconos de Big Sur. Para regenerarlo:
   `python3 -I app/packaging/make_icon.py upstream/FModel/FModel.ico <tmp> dark`, luego
   `iconutil -c icns <tmp>/FModelMac.iconset -o app/packaging/FModelMac.icns`.
+- **unluac (Lua compilado):** `app/packaging/build-unluac.sh` compila el unluac de FModel (Java, MIT,
+  commit `fe187b4`) como `vendor/unluac-build/libunluac.dylib` con GraalVM Native Image; la primera
+  vez descarga GraalVM CE 25 (~340 MB, verificado con su SHA-256) a `vendor/graalvm`. FModel sólo
+  publica la librería para Windows y Linux. Si está, `build-app.sh` la mete en la app con su licencia.
 - **Logs:** `~/Library/Logs/FModelMac/FModelMac-<fecha>.log` (dentro del .app no hay consola).
 - **Firma ad-hoc:** sirve en esta Mac. Para compartirlo con otras personas sin el aviso de
   Gatekeeper hace falta un Developer ID de Apple y notarizar.
@@ -124,7 +128,20 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
   y limpiar.
 - **Barra de estado** que cambia de color según el estado.
 - **Diálogos:** Directory Selector, AES Manager (clave estática y dinámicas por GUID), Settings
-  (pestañas General, Export, Preview, Hotkeys, Audio, Endpoints y Themes), Search y About.
+  (pestañas General, Export, Preview, Hotkeys, Lua, Audio, Endpoints y Themes), Search y About.
+- **Perfiles de juego (Directory › Profiles), no existe en FModel:** cada juego queda guardado con
+  su carpeta, versión de UE, llave AES y dinámicas, mapping, endpoints e idioma; lo que ya se guarda
+  por carpeta (versioning, favoritos, opcode map de Lua, último refresco de AES) lo sigue solo. El
+  menú lista los perfiles (el actual marcado) para cambiar con un clic: se guarda el juego actual y
+  se monta el otro tal como quedó. El Directory Selector elige, crea ("New Profile…", empieza sin
+  llaves ni mappings), renombra y borra perfiles. Lo que cambias en AES o Settings se guarda en el
+  perfil actual. Al actualizar, el juego configurado se convierte en el primer perfil.
+- **Decompile Lua (Settings › Lua):** los `.luac` (Lua 5.0–5.5 compilado) se abren como código con
+  el unluac de FModel, incluido en la app (FModel lo descarga y no hay versión para Mac). Modos
+  Decompile y Disassemble, Raw string, No debug y LuaJ, y un opcode map por juego para los que
+  revuelven los opcodes. Si unluac no puede, se muestra el volcado hex y el motivo en el log.
+  Probado con 284 chunks (las pruebas de unluac compiladas con `luac` 5.5): todos bien. Los `.luac`
+  de FF VII están cifrados por el juego, así que ahí no hay nada que decompilar.
 - **Export › Raw Data y Decompiled Blueprints:** Raw Data pasa por la Export Session con el
   `RawDataExporter` de CUE4Parse (como FModel) y escribe los archivos del paquete tal cual (`.uasset`,
   `.uexp`, `.ubulk`…). Decompiled Blueprints guarda el pseudo C++ de Decompile Blueprint como `.cpp`.
@@ -243,6 +260,11 @@ dotnet run -- --json <carpeta Paks> GAME_UE4_25 <AES|-> --refs Game/Content/.../
 # Crea un backup, lo lee y lo compara con el juego (tiempos); --online-backup <dir> además lista los de
 # FModel, descarga el más chico y lo compara (requiere red)
 dotnet run -- --json <carpeta Paks> GAME_UE4_25 <AES|-> --backup ./out
+# Decompila chunks de Lua del disco con la libunluac incluida (FMODELMAC_LUA_MODE=disassemble, FMODELMAC_LINES=n)
+dotnet run -- --unluac <archivo.luac>...
+# Perfiles: parte de una configuración vieja del juego A, crea el perfil de B con el Directory Selector,
+# cambia entre ambos y reinicia
+dotnet run -- --profiles <outdir> <paks A> <EGame A> <aes A|-> <paks B> <EGame B> <aes B|->
 # Decompile Blueprint: líneas, tiempo y clases que fallaron (FMODELMAC_LINES=n imprime n líneas)
 dotnet run -- --json <carpeta Paks> GAME_UE4_25 <AES|-> --decompile Game/Content/.../Algo_BP.uasset
 ```

@@ -55,6 +55,15 @@ public partial class SettingsWindow : Window
         SkeletonAsMeshBox.IsChecked = settings.SaveSkeletonAsMesh;
         AesReloadBox.ItemsSource = AesReloads.Select(r => r.GetDescription()).ToArray();
         AesReloadBox.SelectedIndex = Math.Max(0, Array.IndexOf(AesReloads, settings.AesReload));
+        DecompileLuaBox.IsChecked = settings.DecompileLua;
+        LuaModeBox.SelectedIndex = settings.LuaMode == LuaMode.Disassemble ? 1 : 0;
+        LuaRawStringBox.IsChecked = settings.LuaRawString;
+        LuaNoDebugBox.IsChecked = settings.LuaNoDebug;
+        LuaLuajBox.IsChecked = settings.LuaLuaj;
+        LuaOpCodeMapBox.Text = settings.CurrentLuaOpCodeMap;
+        LuaStatusText.Text = LuaDecompiler.IsAvailable
+            ? "Compiled Lua 5.0–5.5 chunks (.luac) open as source. unluac is included with FModelMac."
+            : LuaDecompiler.LoadError;
         _hotkeys = settings.Hotkeys.Clone();
         BuildHotkeys();
         JsonPreview.SyntaxHighlighting = _previewHighlighting;
@@ -282,6 +291,12 @@ public partial class SettingsWindow : Window
         _settings.SaveSkeletonAsMesh = SkeletonAsMeshBox.IsChecked == true;
         _settings.AesReload = AesReloads[Math.Max(0, AesReloadBox.SelectedIndex)];
         _settings.Hotkeys = _hotkeys;
+        _settings.DecompileLua = DecompileLuaBox.IsChecked == true;
+        _settings.LuaMode = LuaModeBox.SelectedIndex == 1 ? LuaMode.Disassemble : LuaMode.Decompile;
+        _settings.LuaRawString = LuaRawStringBox.IsChecked == true;
+        _settings.LuaNoDebug = LuaNoDebugBox.IsChecked == true;
+        _settings.LuaLuaj = LuaLuajBox.IsChecked == true;
+        _settings.CurrentLuaOpCodeMap = LuaOpCodeMapBox.Text;
         _settings.JsonHighlightTheme = SelectedJsonTheme;
         AppResources.SetJsonTheme(SelectedJsonTheme);
         _settings.ReadScriptData = ScriptDataBox.IsChecked == true;

@@ -22,7 +22,8 @@ namespace FModelMac.Services;
 /// <param name="Skeleton">The skeleton of the package, shown as an empty mesh with "Handle Skeletons as Empty Meshes".</param>
 public sealed record PreviewResult(string Text, string? Highlight, byte[]? Image, string? ImageName,
     UObject? Mesh = null, UAnimationAsset? Animation = null, UWorld? World = null,
-    IReadOnlyList<ExtractedSound>? Sounds = null, IReadOnlyList<string>? SoundWarnings = null, USkeleton? Skeleton = null);
+    IReadOnlyList<ExtractedSound>? Sounds = null, IReadOnlyList<string>? SoundWarnings = null, USkeleton? Skeleton = null,
+    string? Warning = null);
 
 public static class AssetPreview
 {
@@ -33,7 +34,9 @@ public static class AssetPreview
         "png", "jpg", "jpeg", "bmp", "gif", "webp"
     };
 
-    public static PreviewResult Build(IFileProvider provider, GameFile file, CancellationToken ct, SoundExtractor? audio = null)
+    /// <param name="lua">Decompile compiled Lua chunks with these options (null: show them as they are).</param>
+    public static PreviewResult Build(IFileProvider provider, GameFile file, CancellationToken ct, SoundExtractor? audio = null,
+        LuaOptions? lua = null)
     {
         // The extractor keeps per-call warnings: one extraction at a time
         (List<ExtractedSound> Sounds, string[] Warnings) Sounds(Func<SoundExtractor, List<ExtractedSound>> extract)
@@ -70,6 +73,17 @@ public static class AssetPreview
 
         if (ImageExtensions.Contains(file.Extension))
             return new PreviewResult("", null, bytes, file.Name);
+
+        // FModel's "Decompile Lua": compiled chunks through unluac; source .lua files are shown as they are
+        if (LuaDecompiler.IsChunk(bytes))
+        {
+            if (lua is null) return new PreviewResult(HexDump(bytes, 64 * 1024), null, null, null, Warning: "Compiled Lua: turn on Settings › Lua › Decompile Lua to read it");
+            var result = LuaDecompiler.Decompile(bytes, lua);
+            if (result.Text is { } code)
+                return new PreviewResult(Truncate(code), lua.Disassemble ? null : "Lua", null, null,
+                    Warning: result.Partial ? $"{file.Name}: partially decompiled ({result.Error})" : null);
+            return new PreviewResult(HexDump(bytes, 64 * 1024), null, null, null, Warning: $"{file.Name}: {result.Error}");
+        }
 
         var highlight = HighlightFor(file.Extension);
         return highlight is not null || LooksLikeText(bytes) // e.g. .txt/.csv: text without highlighting

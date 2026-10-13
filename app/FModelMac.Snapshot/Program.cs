@@ -351,6 +351,53 @@ if (args is ["--audio-ui", var uiOut, var uiPaks, var uiGame, var uiAes, ..])
     return;
 }
 
+// "--profiles <outdir> <paks A> <EGame A> <aes A|-> <paks B> <EGame B> <aes B|->" starts from pre-profile settings for game A,
+// creates game B's profile through the Directory Selector, switches back and forth, restarts, and takes screenshots
+if (args is ["--profiles", var profOut, var paksA, var gameA, var aesA, var paksB, var gameB, var aesB])
+{
+    profOut = Path.GetFullPath(profOut);
+    Directory.CreateDirectory(profOut);
+    var profData = Path.Combine(profOut, "data");
+    if (Directory.Exists(profData)) Directory.Delete(profData, true);
+    Environment.SetEnvironmentVariable("FMODELMAC_DATA_DIR", profData);
+    // Written the way earlier versions did: no Profiles yet
+    File.WriteAllText(Path.Combine(Directory.CreateDirectory(profData).FullName, "settings.json"), Newtonsoft.Json.JsonConvert.SerializeObject(new
+    {
+        ArchiveDir = paksA, Game = gameA, AesKey = aesA == "-" ? null : aesA, AssetLanguage = "Japanese",
+        DynamicKeys = new Dictionary<string, string> { ["0123456789ABCDEF0123456789ABCDEF"] = "0x" + new string('1', 64) },
+        OutputDir = Path.Combine(profOut, "Output")
+    }));
+    RunOnUiThread(SnapshotApp.BuildAvaloniaApp(), () => ProfilesTestAsync(profOut, paksB, gameB, aesB == "-" ? null : aesB), TimeSpan.FromMinutes(8));
+    return;
+}
+
+// "--unluac <chunk>..." decompiles compiled Lua files from disk with the bundled libunluac (FMODELMAC_LUA_MODE=
+// disassemble for the other mode); prints each result's status and its first FMODELMAC_LINES lines (default 15)
+if (args is ["--unluac", .. var chunkFiles])
+{
+    var disassemble = Environment.GetEnvironmentVariable("FMODELMAC_LUA_MODE") == "disassemble";
+    var options = LuaOptions.From(new AppSettings { LuaMode = disassemble ? LuaMode.Disassemble : LuaMode.Decompile });
+    Console.WriteLine($"unluac: {(LuaDecompiler.IsAvailable ? "loaded" : LuaDecompiler.LoadError)} | flags {options.Flags}");
+    var lines = int.TryParse(Environment.GetEnvironmentVariable("FMODELMAC_LINES"), out var n) ? n : 15;
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var all = chunkFiles.AsParallel().AsOrdered().Select(f => (Path: f, Result: LuaDecompiler.Decompile(File.ReadAllBytes(f), options))).ToArray();
+    Console.WriteLine($"{all.Length} chunk(s) in {sw.Elapsed.TotalSeconds:F2}s: {all.Count(r => r.Result.Text is not null && !r.Result.Partial)} ok, " +
+                      $"{all.Count(r => r.Result.Partial)} partial, {all.Count(r => r.Result.Text is null)} failed");
+    // The extraction path too: the first file as a game file, with Decompile Lua on and off
+    var gameFile = new CUE4Parse.FileProvider.Objects.StreamedGameFile("Game/Content/Lua/" + Path.GetFileName(chunkFiles[0]),
+        new MemoryStream(File.ReadAllBytes(chunkFiles[0])), new CUE4Parse.UE4.Versions.VersionContainer());
+    var on = AssetPreview.Build(null!, gameFile, CancellationToken.None, null, options);
+    var off = AssetPreview.Build(null!, gameFile, CancellationToken.None, null, null);
+    Console.WriteLine($"Preview on: highlight {on.Highlight}, {on.Text.Split('\n').Length} lines, warning '{on.Warning}' | " +
+                      $"off: highlight {off.Highlight ?? "none"}, starts '{off.Text.Split('\n')[0]}', warning '{off.Warning}'");
+    foreach (var (path, result) in all.Take(lines > 0 ? 3 : 0).Concat(all.Where(r => r.Result.Text is null || r.Result.Partial).Take(5)))
+    {
+        Console.WriteLine($"{Path.GetFileName(path)}: {(result.Text is null ? "FAILED" : result.Partial ? "partial" : "ok")}{(result.Error is null ? "" : $" ({result.Error})")}");
+        foreach (var line in (result.Text ?? "").Split('\n').Take(lines)) Console.WriteLine($"  | {line}");
+    }
+    return;
+}
+
 // "--json <paks dir> <EGame> <aes|-> <package>..." prints the exports as FModel's JSON (for inspecting assets)
 if (args is ["--json", var jsonPaks, var jsonGame, var jsonAes, ..])
 {
@@ -412,6 +459,37 @@ if (args is ["--json", var jsonPaks, var jsonGame, var jsonAes, ..])
             foreach (var line in lines.Take(int.TryParse(Environment.GetEnvironmentVariable("FMODELMAC_LINES"), out var n) ? n : 25))
                 Console.WriteLine($"  | {line}");
         }
+        return;
+    }
+
+    // "--json ... --lua [path]" decompiles every compiled Lua chunk (timed, with ok/partial/failed counts), in parallel
+    // like several tabs would; with a path, prints that file (FMODELMAC_LINES lines, default 40)
+    if (args[4..] is ["--lua", .. var luaTargets])
+    {
+        var options = LuaOptions.From(vm.Settings);
+        Console.WriteLine($"unluac: {(LuaDecompiler.IsAvailable ? "loaded" : LuaDecompiler.LoadError)} | flags {options.Flags}");
+        var files = luaTargets.Length > 0 ? luaTargets.Select(t => jsonProvider[t]).ToArray()
+            : jsonProvider.Files.Values.Where(f => f.Extension is "luac" or "lua").DistinctBy(f => f.Path).ToArray();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var results = files.AsParallel().Select(f =>
+        {
+            var data = f.Read();
+            return (File: f, Chunk: LuaDecompiler.IsChunk(data), Result: LuaDecompiler.IsChunk(data) ? LuaDecompiler.Decompile(data, options) : null);
+        }).ToArray();
+        var chunks = results.Where(r => r.Chunk).ToArray();
+        Console.WriteLine($"{files.Length} Lua files ({chunks.Length} compiled) in {sw.Elapsed.TotalSeconds:F2}s: " +
+                          $"{chunks.Count(r => r.Result!.Text is not null && !r.Result.Partial)} ok, {chunks.Count(r => r.Result!.Partial)} partial, " +
+                          $"{chunks.Count(r => r.Result!.Text is null)} failed");
+        foreach (var other in results.Where(r => !r.Chunk).Take(3))
+        {
+            var head = other.File.Read().Take(48).ToArray();
+            Console.WriteLine($"  not a chunk: {other.File.Path} {Convert.ToHexString(head)} '{new string(head.Select(b => b is >= 32 and < 127 ? (char) b : '.').ToArray())}'");
+        }
+        foreach (var failed in chunks.Where(r => r.Result!.Text is null || r.Result.Partial).Take(5))
+            Console.WriteLine($"  {failed.File.Path}: {failed.Result!.Error}");
+        if (luaTargets.Length > 0)
+            foreach (var line in (results[0].Result?.Text ?? "").Split('\n').Take(int.TryParse(Environment.GetEnvironmentVariable("FMODELMAC_LINES"), out var n) ? n : 40))
+                Console.WriteLine($"  | {line}");
         return;
     }
 
@@ -1098,11 +1176,15 @@ async Task MinorSettingsTestAsync(MainWindow window, MainViewModel vm)
     Dispatcher.UIThread.RunJobs();
     Console.WriteLine($"Hotkey box: ⇧← -> '{captured}' | Backspace clears: {!cleared} | A -> '{hotkeyBox.Hotkey}' | settings still open: {settings.IsVisible}");
     Save(settings, "19-settings-hotkeys.png");
-    settingsTabs.SelectedIndex = 6;
+    settingsTabs.SelectedIndex = 4;
+    await Task.Delay(200);
+    Console.WriteLine($"Lua: unluac {(LuaDecompiler.IsAvailable ? "loaded" : LuaDecompiler.LoadError)} | {settings.FindControl<TextBlock>("LuaStatusText")!.Text}");
+    Save(settings, "22-settings-lua.png");
+    settingsTabs.SelectedIndex = 7;
     settings.FindControl<ComboBox>("JsonThemeBox")!.SelectedIndex = (int) JsonHighlightTheme.TokyoNight;
     await Task.Delay(300);
     Save(settings, "20-settings-themes.png");
-    settingsTabs.SelectedIndex = 5;
+    settingsTabs.SelectedIndex = 6;
     await Task.Delay(200);
     Save(settings, "21-settings-endpoints.png");
     settings.Close();
@@ -1152,18 +1234,120 @@ async Task InputTestAsync(Window window, MainViewModel vm)
     vm.NavigateToFolder("CUE4ParseFixtures/Content/Fixtures/Textures");
 }
 
+async Task ProfilesTestAsync(string outputDir, string paksB, string gameB, string? aesB)
+{
+    string Describe(AppSettings s) => $"profile '{s.CurrentProfile}', {s.Game}, AES {(s.AesKey is null ? "none" : s.AesKey[..10] + "…")}, " +
+                                      $"{s.DynamicKeys.Count} dynamic, usmap {(s.UsmapPath is null ? "none" : Path.GetFileName(s.UsmapPath))}, language {s.AssetLanguage}, dir …/{Path.GetFileName(Path.GetDirectoryName(Path.GetDirectoryName(s.ArchiveDir)))}";
+    var vm = new MainViewModel();
+    var window = new MainWindow { DataContext = vm, Width = 1600, Height = 950 };
+    window.Show();
+    await WaitFor(() => vm.Archives.Count > 0 && vm.IsReady, "game A");
+    var menu = window.FindControl<MenuItem>("ProfilesMenu")!;
+    string MenuText() => string.Join(" | ", menu.ItemsSource!.Cast<object>().Select(i => i is MenuItem m ? $"{m.Header}{(m.IsChecked ? " ✓" : "")}" : "—"));
+    Console.WriteLine($"Migrated: {vm.Settings.Profiles.Count} profile(s): {Describe(vm.Settings)}");
+    Console.WriteLine($"  mounted {vm.StatusExtra} | title '{vm.Title}' | menu: {MenuText()}");
+
+    // Directory › Profiles › New Profile…: the Directory Selector on "New Profile…", with game B's folder
+    var selector = new DirectorySelectorWindow(vm.Settings, newProfile: true);
+    selector.Show();
+    await Task.Delay(200);
+    selector.FindControl<TextBox>("DirectoryBox")!.Text = paksB;
+    selector.FindControl<ComboBox>("Versions")!.SelectedItem = gameB;
+    SaveTo(selector, outputDir, "profiles-1-new.png");
+    var ok = selector.GetVisualDescendants().OfType<Button>().First(b => b.Content as string == "OK");
+    var closed = false;
+    selector.Closed += (_, _) => closed = true;
+    ok.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+    Console.WriteLine($"New profile: closed {closed} | {Describe(vm.Settings)} | profiles {string.Join(", ", vm.Settings.Profiles.Select(p => p.Name))}");
+    vm.SaveSettings();
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    await vm.InitializeGameAsync();
+    Console.WriteLine($"  mounted {vm.StatusExtra} in {watch.Elapsed.TotalSeconds:F1}s | {vm.Archives.Count(a => !a.IsEnabled)} locked | title '{vm.Title}'");
+    foreach (var log in vm.Logs.TakeLast(4)) Console.WriteLine($"    [{log.Kind}] {log.Message}");
+    if (aesB is not null)
+    {
+        // What Directory › AES does: the key, then mount again
+        vm.Settings.AesKey = aesB;
+        // ...and Settings › Endpoints › Mapping File, when given
+        if (Environment.GetEnvironmentVariable("FMODELMAC_USMAP_B") is { Length: > 0 } usmapB) vm.Settings.UsmapPath = usmapB;
+        vm.SaveSettings();
+        watch.Restart();
+        await vm.InitializeGameAsync();
+        Console.WriteLine($"  with its AES key: mounted {vm.StatusExtra} in {watch.Elapsed.TotalSeconds:F1}s | {vm.Archives.Count(a => !a.IsEnabled)} locked | " +
+                          $"files {vm.Archive?.Provider.Files.Count:N0}");
+        foreach (var log in vm.Logs.TakeLast(3)) Console.WriteLine($"    [{log.Kind}] {log.Message}");
+        if (vm.Archive?.Provider.Files.Values.FirstOrDefault(f => f.Extension == "uasset" && f.Name.StartsWith("DT_")) is { } sample)
+        {
+            await vm.ExtractAsync(sample);
+            Console.WriteLine($"  extract {sample.Name}: {vm.StatusText} | {vm.SelectedTab?.Document.LineCount} lines");
+        }
+    }
+
+    // Game B's own settings: language, a versioning option (kept per directory), a mapping file
+    vm.Settings.AssetLanguage = "Spanish";
+    vm.Settings.CurrentVersioning.Options = new Dictionary<string, bool> { ["SkipObjectVersions"] = true };
+    vm.Settings.CurrentLuaOpCodeMap = ".op 0 move";
+    vm.SaveSettings();
+    window.GetType().GetMethod("BuildProfilesMenu", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(window, null);
+    Console.WriteLine($"  menu: {MenuText()}");
+
+    // Switch to A and back
+    var profileA = vm.Settings.Profiles.First(p => p.Name != vm.Settings.CurrentProfile);
+    var profileB = vm.Settings.ActiveProfile!;
+    watch.Restart();
+    await vm.SwitchProfileAsync(profileA);
+    Console.WriteLine($"Switch to A: {Describe(vm.Settings)} | versioning options {vm.Settings.CurrentVersioning.Options?.Count ?? 0} | " +
+                      $"opcode map {(vm.Settings.CurrentLuaOpCodeMap is null ? "none" : "set")} | {vm.StatusExtra} in {watch.Elapsed.TotalSeconds:F1}s | title '{vm.Title}'");
+    watch.Restart();
+    await vm.SwitchProfileAsync(profileB);
+    if (vm.Archive?.Provider.Files.Values.FirstOrDefault(f => f.Extension == "uasset" && f.Name.StartsWith("DT_")) is { } sampleB)
+    {
+        await vm.ExtractAsync(sampleB);
+        Console.WriteLine($"  B extract after switching back: {vm.StatusText} | {vm.SelectedTab?.Document.LineCount} lines");
+    }
+    Console.WriteLine($"Switch to B: {Describe(vm.Settings)} | versioning options {vm.Settings.CurrentVersioning.Options?.Count ?? 0} | " +
+                      $"opcode map {(vm.Settings.CurrentLuaOpCodeMap is null ? "none" : "set")} | {vm.StatusExtra} in {watch.Elapsed.TotalSeconds:F1}s");
+
+    // Edit Profiles…: rename B, and a profile whose folder is gone
+    vm.Settings.Profiles.Add(new GameProfile { Name = "Old game", ArchiveDir = "/nonexistent/Paks", Game = "GAME_UE4_27" });
+    await vm.SwitchProfileAsync(vm.Settings.FindProfile("Old game")!);
+    Console.WriteLine($"Missing folder: still '{vm.Settings.CurrentProfile}' | {vm.Logs[^1].Message}");
+    var editor = new DirectorySelectorWindow(vm.Settings);
+    editor.Show();
+    await Task.Delay(200);
+    var profileBox = editor.FindControl<ComboBox>("ProfileBox")!;
+    Console.WriteLine($"Editor: {string.Join(" | ", profileBox.ItemsSource!.Cast<string>())} | selected '{profileBox.SelectedItem}'");
+    SaveTo(editor, outputDir, "profiles-2-edit.png");
+    profileBox.SelectedIndex = vm.Settings.Profiles.IndexOf(vm.Settings.FindProfile("Old game")!);
+    editor.FindControl<Button>("DeleteButton")!.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+    editor.FindControl<TextBox>("NameBox")!.Text = profileB.Name + " (PC)";
+    editor.GetVisualDescendants().OfType<Button>().First(b => b.Content as string == "OK").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+    vm.SaveSettings();
+    Console.WriteLine($"After edit: {string.Join(", ", vm.Settings.Profiles.Select(p => p.Name))} | current '{vm.Settings.CurrentProfile}'");
+
+    // A restart keeps everything
+    window.Close();
+    var again = AppSettings.Load();
+    Console.WriteLine($"Restart: {again.Profiles.Count} profiles | {Describe(again)} | A: {again.Profiles.First(p => p.Name == profileA.Name).Summary}, " +
+                      $"language {again.Profiles.First(p => p.Name == profileA.Name).AssetLanguage}");
+    var title = new MainViewModel();
+    Console.WriteLine($"  new window title before mounting: '{title.Title}'");
+}
+
 async Task WaitFor(Func<bool> condition, string what)
 {
     for (var i = 0; i < 400 && !condition(); i++) await Task.Delay(50);
     if (!condition()) Console.WriteLine($"Timed out waiting for {what}");
 }
 
-void Save(TopLevel top, string name)
+void Save(TopLevel top, string name) => SaveTo(top, outDir, name);
+
+void SaveTo(TopLevel top, string directory, string name)
 {
     Dispatcher.UIThread.RunJobs();
     AvaloniaHeadlessPlatform.ForceRenderTimerTick();
     var frame = top.CaptureRenderedFrame();
-    var path = Path.Combine(outDir, name);
+    var path = Path.Combine(directory, name);
     frame?.Save(path);
     Console.WriteLine(frame is null ? $"No frame for {name}" : $"Saved {name}");
 }

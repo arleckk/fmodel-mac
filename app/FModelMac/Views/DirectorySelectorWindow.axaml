@@ -9,19 +9,28 @@
         <StackPanel Margin="10,5,10,10">
             <TextBlock Text="Instruction" HorizontalAlignment="Center" FontSize="20" FontWeight="SemiBold" />
             <TextBlock TextAlignment="Center" TextWrapping="Wrap" HorizontalAlignment="Center"
-                       Text="We like to make things as simple as possible. Choose the folder holding your game's archives (usually Content/Paks) and its Unreal Engine version. FModel will use this information to find archives to load and decrypt if needed. Make sure to not skip this step!" />
+                       Text="We like to make things as simple as possible. Choose the folder holding your game's archives (usually Content/Paks) and its Unreal Engine version. Each game is saved as a profile with its keys, mappings, endpoints and language, so you can switch back to it later from Directory › Profiles." />
         </StackPanel>
 
         <Border Background="{StaticResource Layer2BackgroundBrush}" Margin="10,10,10,18" Padding="10">
             <StackPanel>
-                <Grid ColumnDefinitions="Auto,10,*,5,Auto" RowDefinitions="Auto,5,Auto" Margin="0,5">
-                    <TextBlock Text="UE Versions" VerticalAlignment="Center" />
-                    <ComboBox x:Name="Versions" Grid.Column="2" Grid.ColumnSpan="3" HorizontalAlignment="Stretch"
+                <Grid ColumnDefinitions="Auto,10,*,5,Auto" RowDefinitions="Auto,5,Auto,12,Auto,5,Auto" Margin="0,5">
+                    <TextBlock Text="Profile" VerticalAlignment="Center" />
+                    <ComboBox x:Name="ProfileBox" Grid.Column="2" HorizontalAlignment="Stretch" MaxDropDownHeight="420"
+                              SelectionChanged="OnProfileChanged" />
+                    <Button x:Name="DeleteButton" Grid.Column="4" Classes="toolbar" ToolTip.Tip="Delete this profile" Click="OnDeleteClick">
+                        <c:Glyph Data="{StaticResource TrashIcon}" />
+                    </Button>
+                    <TextBlock Grid.Row="2" Text="Name" VerticalAlignment="Center" />
+                    <TextBox x:Name="NameBox" Grid.Row="2" Grid.Column="2" Grid.ColumnSpan="3" Watermark="Profile name (e.g. the game)" />
+                    <TextBlock Grid.Row="4" Text="UE Versions" VerticalAlignment="Center" />
+                    <ComboBox x:Name="Versions" Grid.Row="4" Grid.Column="2" Grid.ColumnSpan="3" HorizontalAlignment="Stretch"
                               MaxDropDownHeight="420" />
-                    <TextBlock Grid.Row="2" Text="Directory" VerticalAlignment="Center" />
-                    <TextBox x:Name="DirectoryBox" Grid.Row="2" Grid.Column="2" Watermark="/path/to/Game/Content/Paks" />
-                    <Button Grid.Row="2" Grid.Column="4" Content="..." Click="OnBrowseClick" />
+                    <TextBlock Grid.Row="6" Text="Directory" VerticalAlignment="Center" />
+                    <TextBox x:Name="DirectoryBox" Grid.Row="6" Grid.Column="2" Watermark="/path/to/Game/Content/Paks" />
+                    <Button Grid.Row="6" Grid.Column="4" Content="..." Click="OnBrowseClick" />
                 </Grid>
+                <TextBlock x:Name="ProfileText" Classes="dim" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0" />
                 <c:SectionSeparator Text="ADD UNDETECTED GAME" Margin="0,8,0,0" />
                 <TextBlock HorizontalAlignment="Center" Classes="dim" TextWrapping="Wrap" TextAlignment="Center"
                            Text="Game detection relies on Windows launchers, so on macOS point the directory to a copy of the game's Paks folder." />

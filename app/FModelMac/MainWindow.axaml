@@ -59,6 +59,9 @@
                 <MenuItem Header="Selector" Click="OnDirectorySelectorClick">
                     <MenuItem.Icon><c:Glyph Data="{StaticResource DirectoryIcon}" /></MenuItem.Icon>
                 </MenuItem>
+                <MenuItem x:Name="ProfilesMenu" Header="Profiles">
+                    <MenuItem.Icon><c:Glyph Data="{StaticResource DirectoriesIcon}" /></MenuItem.Icon>
+                </MenuItem>
                 <MenuItem Header="AES" Click="OnAesManagerClick" IsEnabled="{Binding IsReady}">
                     <MenuItem.Icon><c:Glyph Data="{StaticResource KeyIcon}" /></MenuItem.Icon>
                 </MenuItem>
