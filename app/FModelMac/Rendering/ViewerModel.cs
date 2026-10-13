@@ -106,6 +106,7 @@ public sealed class ViewerModel
         {
             UStaticMesh mesh => Build(new StaticMeshDto(mesh, EMeshQuality.Highest, ENaniteMeshFormat.NoNanite), "Static Mesh", context, overrideMaterials, ct),
             USkinnedAsset mesh => BuildSkinned(WithMorphData(mesh), context, overrideMaterials, ct),
+            USkeleton skeleton => FromSkeleton(skeleton),
             _ => throw new NotSupportedException($"{export.ExportType} can't be shown in the 3D viewer")
         };
     }
@@ -163,6 +164,21 @@ public sealed class ViewerModel
             Bones = mesh.Bones.Select(b => new ViewerBone(b.Name, b.ParentIndex, b.Transform.Rotation, b.Transform.Translation, b.Transform.Scale3D)).ToArray(),
             Skin = skin,
             Morphs = LoadMorphs(mesh.MorphTargets, (int) lod.SourceLodIndex, lod.Vertices.Length)
+        };
+    }
+
+    /// <summary>FModel's "Handle Skeletons as Empty Meshes": just the bones, so animations can play on a skeleton.</summary>
+    public static ViewerModel FromSkeleton(USkeleton skeleton)
+    {
+        using var dto = new SkeletonDto(skeleton);
+        if (dto.Bones.Length == 0) throw new InvalidOperationException($"{skeleton.Name} has no bones");
+        var (min, max) = (dto.Bounds.Min, dto.Bounds.Max);
+        return new ViewerModel
+        {
+            Name = skeleton.Name, Kind = "Skeleton", Vertices = [], Indices = [], Sections = [], LodCount = 0,
+            Min = new Vector3(min.X, min.Z, min.Y), Max = new Vector3(max.X, max.Z, max.Y),
+            Bones = dto.Bones.Select(b => new ViewerBone(b.Name, b.ParentIndex, b.Transform.Rotation, b.Transform.Translation, b.Transform.Scale3D)).ToArray(),
+            Skin = []
         };
     }
 

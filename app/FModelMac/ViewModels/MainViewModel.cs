@@ -141,7 +141,8 @@ public sealed partial class MainViewModel : ObservableObject
     // ---------- Game initialization (Directory Selector / AES) ----------
 
     /// <summary>Mounts the configured game and fills the Archives tab, like FModel does at startup.</summary>
-    public async Task InitializeGameAsync()
+    /// <param name="refreshAes">Ask the AES endpoint whatever "AES Reload at Launch" says (its settings changed).</param>
+    public async Task InitializeGameAsync(bool refreshAes = false)
     {
         if (!HasGameDirectory)
         {
@@ -161,7 +162,7 @@ public sealed partial class MainViewModel : ObservableObject
 
         try
         {
-            await RefreshAesAsync();
+            if (refreshAes || ShouldReloadAes()) await RefreshAesAsync();
             var usmap = await ResolveMappingsAsync();
             var versioning = Settings.CurrentVersioning;
             var options = new LoadOptions(Settings.ArchiveDir!, game, Settings.AesKey, Settings.DynamicKeys, usmap, versioning);
@@ -203,7 +204,25 @@ public sealed partial class MainViewModel : ObservableObject
         {
             IsBusy = false;
         }
-        if (remount) await InitializeGameAsync();
+        if (remount) await InitializeGameAsync(refreshAes: true);
+    }
+
+    // FModel's "AES Reload at Launch": Always, Never or Once Per Day (per game directory)
+    private bool ShouldReloadAes()
+    {
+        if (Settings.AesEndpoint is not { IsUsable: true }) return false;
+        switch (Settings.AesReload)
+        {
+            case AesReload.Always:
+                return true;
+            case AesReload.OncePerDay:
+                var key = Settings.ArchiveDir ?? "";
+                if (Settings.LastAesReload.TryGetValue(key, out var last) && last.Date == DateTime.Today) return false;
+                Settings.LastAesReload[key] = DateTime.Today;
+                return true;
+            default:
+                return false;
+        }
     }
 
     // FModel configures the uedb.dev endpoints for Fortnite and VALORANT; do the same once per game directory
@@ -620,9 +639,16 @@ public sealed partial class MainViewModel : ObservableObject
                     : $"Found {found.Count} sounds in '{file.Name}'");
                 if (Settings.PlayAudioOnExtract) SoundsReady?.Invoke(found);
             }
-            if (Settings.PreviewMeshes && result.Mesh is { } mesh) await PreviewMeshAsync(mesh);
-            if (Settings.PreviewMeshes && result.Animation is { } animation) await PreviewAnimationAsync(animation);
-            if (Settings.PreviewMeshes && result.World is { } world) await PreviewMapAsync(world);
+            // Settings › Preview, per kind of asset
+            var mesh = result.Mesh switch
+            {
+                UStaticMesh when Settings.PreviewStaticMeshes => result.Mesh,
+                USkinnedAsset when Settings.PreviewSkeletalMeshes => result.Mesh,
+                _ => null
+            } ?? (Settings.SaveSkeletonAsMesh ? result.Skeleton : null);
+            if (mesh is not null) await PreviewMeshAsync(mesh);
+            if (Settings.PreviewAnimations && result.Animation is { } animation) await PreviewAnimationAsync(animation);
+            if (Settings.PreviewWorlds && result.World is { } world) await PreviewMapAsync(world);
         }
         catch (OperationCanceledException)
         {
@@ -729,8 +755,10 @@ public sealed partial class MainViewModel : ObservableObject
         {
             var model = await Task.Run(() => ViewerModel.FromExport(mesh));
             ModelReady?.Invoke(model);
-            Log(LogKind.Information, $"Loaded '{model.Name}' in the 3D viewer ({model.VertexCount:N0} vertices, " +
-                                     $"{model.TriangleCount:N0} triangles, {model.Sections.Length} materials)");
+            Log(LogKind.Information, model is { VertexCount: 0, Bones: { } bones }
+                ? $"Loaded skeleton '{model.Name}' in the 3D viewer ({bones.Length:N0} bones)"
+                : $"Loaded '{model.Name}' in the 3D viewer ({model.VertexCount:N0} vertices, " +
+                  $"{model.TriangleCount:N0} triangles, {model.Sections.Length} materials)");
             SetStatus(StatusKind.Completed, "Completed");
         }
         catch (Exception e)
@@ -812,6 +840,34 @@ public sealed partial class MainViewModel : ObservableObject
         return target;
     });
 
+    // FModel's Export › Decompiled Blueprints: the pseudo C++ of Decompile Blueprint, saved as .cpp
+    [RelayCommand]
+    private Task ExportCode(IList? items) => ExportAsync(PackagesOnly(items), "decompiled blueprint(s)", (file, path) =>
+    {
+        if (_archive!.DecompileBlueprint(file) is not { } code) return null;
+        var target = path + ".cpp";
+        File.WriteAllText(target, code);
+        return target;
+    });
+
+    private static IList? PackagesOnly(IList? items) => items?.OfType<AssetItem>().Where(i => i.IsPackage).ToArray();
+
+    // FModel's Export › Raw Data: the package's files as they are (.uasset, .uexp, .ubulk…), through the Export Session
+    [RelayCommand]
+    private async Task ExportRawData(IList? items)
+    {
+        var files = (items?.OfType<AssetItem>() ?? []).Select(i => i.File).ToArray();
+        if (files.Length == 0 && SelectedPackage is { } selected) files = [selected.File];
+        if (files.Length == 0 || _archive is null) return;
+        if (ExportSession.IsRunning)
+        {
+            Log(LogKind.Warning, "The Export Session is running: wait for it to finish, or cancel it, before queueing more");
+            return;
+        }
+        var added = ExportSession.EnqueueRaw(files, _archive.Provider);
+        await AfterQueueAsync(added, "package");
+    }
+
     // Textures go through the ExportSession too, for FModel's texture format, quality, HDR and mip options
     [RelayCommand]
     private Task ExportTexture(IList? items) => QueueExportsAsync(items, "texture", e => e is UTexture);
@@ -826,7 +882,7 @@ public sealed partial class MainViewModel : ObservableObject
         var saved = 0;
         foreach (var file in files)
         {
-            var basePath = Path.Combine(Settings.ExportsDir, file.PathWithoutExtension);
+            var basePath = Settings.ExportPath(file.PathWithoutExtension);
             try
             {
                 var target = await Task.Run(() =>
@@ -914,7 +970,8 @@ public sealed partial class MainViewModel : ObservableObject
 
     // Models, animations, worlds and textures go to FModel's Export Session (Views › Export Session)
     [RelayCommand]
-    private Task ExportModel(IList? items) => QueueExportsAsync(items, "model", e => e is UStaticMesh or USkinnedAsset);
+    private Task ExportModel(IList? items) => QueueExportsAsync(items, "model",
+        e => e is UStaticMesh or USkinnedAsset || Settings.SaveSkeletonAsMesh && e is USkeleton);
 
     [RelayCommand]
     private Task ExportAnimation(IList? items) => QueueExportsAsync(items, "animation", e => e is UAnimationAsset);
@@ -951,15 +1008,7 @@ public sealed partial class MainViewModel : ObservableObject
                 return;
             }
             var added = ExportSession.Enqueue(exports, provider);
-            if (Settings.ExportImmediately)
-            {
-                await RunExportSessionAsync();
-                return;
-            }
-            Log(LogKind.Information, $"Queued {added} {what}(s) in the Export Session ({ExportSession.QueuedCount} waiting): " +
-                                     "open Views › Export Session to export them");
-            SetStatus(StatusKind.Completed, "Completed");
-            ExportsQueued?.Invoke(added);
+            await AfterQueueAsync(added, what);
         }
         catch (Exception e)
         {
@@ -967,6 +1016,19 @@ public sealed partial class MainViewModel : ObservableObject
             Log(LogKind.Error, $"{e.GetType().Name}: {e.Message}");
             SetStatus(StatusKind.Failed, "Failed");
         }
+    }
+
+    private async Task AfterQueueAsync(int added, string what)
+    {
+        if (Settings.ExportImmediately)
+        {
+            await RunExportSessionAsync();
+            return;
+        }
+        Log(LogKind.Information, $"Queued {added} {what}(s) in the Export Session ({ExportSession.QueuedCount} waiting): " +
+                                 "open Views › Export Session to export them");
+        SetStatus(StatusKind.Completed, "Completed");
+        ExportsQueued?.Invoke(added);
     }
 
     /// <summary>Runs the Export Session and logs what it wrote, like FModel's LogSummary.</summary>

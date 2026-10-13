@@ -134,6 +134,7 @@ public partial class ModelViewerWindow : Window
 
         BonesToggle.IsEnabled = single is { IsSkinned: true };
         if (!BonesToggle.IsEnabled) BonesToggle.IsChecked = false;
+        else if (single is { VertexCount: 0 }) BonesToggle.IsChecked = true; // a skeleton: nothing else to see
     }
 
     // ---------- Animation ----------

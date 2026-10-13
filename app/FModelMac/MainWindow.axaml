@@ -295,29 +295,37 @@
                                         <Separator />
                                         <MenuItem Header="Export">
                                             <MenuItem.Icon><c:Glyph Data="{StaticResource ExportIcon}" /></MenuItem.Icon>
-                                            <MenuItem Header="Properties (.json)" Command="{Binding ExportPropertiesCommand}"
+                                            <MenuItem x:Name="ExportDataItem" Header="Raw Data (.uasset)" Command="{Binding ExportRawDataCommand}"
+                                                      CommandParameter="{Binding #PackagesList.SelectedItems}">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource AssetIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="ExportPropertiesItem" Header="Properties (.json)" Command="{Binding ExportPropertiesCommand}"
                                                       CommandParameter="{Binding #PackagesList.SelectedItems}">
                                                 <MenuItem.Icon><c:Glyph Data="{StaticResource JsonIcon}" /></MenuItem.Icon>
                                             </MenuItem>
-                                            <MenuItem Header="Texture" Command="{Binding ExportTextureCommand}"
+                                            <MenuItem x:Name="ExportTexturesItem" Header="Texture" Command="{Binding ExportTextureCommand}"
                                                       CommandParameter="{Binding #PackagesList.SelectedItems}">
                                                 <MenuItem.Icon><c:Glyph Data="{StaticResource TextureIcon}" /></MenuItem.Icon>
                                             </MenuItem>
-                                            <MenuItem Header="Model" Command="{Binding ExportModelCommand}"
+                                            <MenuItem x:Name="ExportModelsItem" Header="Model" Command="{Binding ExportModelCommand}"
                                                       CommandParameter="{Binding #PackagesList.SelectedItems}">
                                                 <MenuItem.Icon><c:Glyph Data="{StaticResource ModelIcon}" /></MenuItem.Icon>
                                             </MenuItem>
-                                            <MenuItem Header="World" Command="{Binding ExportWorldCommand}"
+                                            <MenuItem x:Name="ExportWorldsItem" Header="World" Command="{Binding ExportWorldCommand}"
                                                       CommandParameter="{Binding #PackagesList.SelectedItems}">
                                                 <MenuItem.Icon><c:Glyph Data="{StaticResource WorldIcon}" /></MenuItem.Icon>
                                             </MenuItem>
-                                            <MenuItem Header="Animation" Command="{Binding ExportAnimationCommand}"
+                                            <MenuItem x:Name="ExportAnimationsItem" Header="Animation" Command="{Binding ExportAnimationCommand}"
                                                       CommandParameter="{Binding #PackagesList.SelectedItems}">
                                                 <MenuItem.Icon><c:Glyph Data="{StaticResource AnimationIcon}" /></MenuItem.Icon>
                                             </MenuItem>
-                                            <MenuItem Header="Audio" Command="{Binding ExportAudioCommand}"
+                                            <MenuItem x:Name="ExportAudioItem" Header="Audio" Command="{Binding ExportAudioCommand}"
                                                       CommandParameter="{Binding #PackagesList.SelectedItems}">
                                                 <MenuItem.Icon><c:Glyph Data="{StaticResource AudioIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="ExportCodeItem" Header="Decompiled Blueprints (.cpp)" Command="{Binding ExportCodeCommand}"
+                                                      CommandParameter="{Binding #PackagesList.SelectedItems}">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource CodeIcon}" /></MenuItem.Icon>
                                             </MenuItem>
                                         </MenuItem>
                                         <MenuItem Header="Copy">

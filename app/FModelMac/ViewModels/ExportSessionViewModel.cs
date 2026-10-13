@@ -2,8 +2,10 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CUE4Parse_Conversion;
+using CUE4Parse_Conversion.Exporters;
 using CUE4Parse_Conversion.Options;
 using CUE4Parse.FileProvider;
+using CUE4Parse.FileProvider.Objects;
 using CUE4Parse.UE4.Assets.Exports;
 using CUE4Parse.UE4.Assets.Exports.Animation;
 using CUE4Parse.UE4.Objects.Engine;
@@ -30,15 +32,19 @@ public sealed record ExportLogEntry(LogEventLevel Level, DateTimeOffset Time, st
     public bool IsWarning => Level == LogEventLevel.Warning;
 }
 
-/// <summary>A queued asset, or a dependency (material, texture) the session exported along with it.</summary>
-public sealed partial class ExportItem(string objectPath, string className, UObject? export) : ObservableObject
+/// <summary>A queued asset or package (raw data), or a dependency (material, texture) the session exported along with it.</summary>
+public sealed partial class ExportItem(string objectPath, string className, UObject? export, GameFile? rawFile = null,
+    IFileProvider? provider = null) : ObservableObject
 {
     public UObject? Export { get; } = export;
+    /// <summary>Export › Raw Data: the package's files as they are in the archive.</summary>
+    public GameFile? RawFile { get; } = rawFile;
+    public IFileProvider? Provider { get; } = provider;
     public string ObjectPath { get; } = objectPath;
     public string ClassName { get; } = className;
     public string Name { get; } = objectPath.SubstringAfterLast('.');
     public string Directory { get; } = objectPath.SubstringBeforeLast('.').SubstringBeforeLast('/');
-    public bool IsDependency => Export is null;
+    public bool IsDependency => Export is null && RawFile is null;
     public ObservableCollection<ExportLogEntry> Logs { get; } = [];
 
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(StateText), nameof(CanRemove))]
@@ -131,6 +137,26 @@ public sealed partial class ExportSessionViewModel : ObservableObject
         return added;
     }
 
+    /// <summary>FModel's Export › Raw Data: the package files (.uasset, .uexp, .ubulk…) written as they are.</summary>
+    public int EnqueueRaw(IEnumerable<GameFile> files, IFileProvider provider)
+    {
+        if (IsRunning) return 0;
+        if (QueuedCount == 0) ClearHistory();
+        var added = 0;
+        foreach (var file in files)
+        {
+            var path = $"{file.PathWithoutExtension}.{file.NameWithoutExtension}"; // RawDataExporter's ObjectPath
+            if (_items.TryGetValue(path, out var existing) && existing.State == ExportItemState.Queued) continue;
+            if (existing is not null) RemoveItem(existing);
+            AddItem(new ExportItem(path, RawDataClass, null, file, provider));
+            added++;
+        }
+        QueuedCount = _items.Values.Count(i => i.State == ExportItemState.Queued && !i.IsDependency);
+        return added;
+    }
+
+    public const string RawDataClass = "RawData";
+
     // The path CUE4Parse's exporters report: the fixed package path plus the object name
     public static string ObjectPath(UObject export, IFileProvider provider) => export.Owner is { } owner
         ? $"{provider.FixPath(owner.Name).SubstringBeforeLast('.')}.{export.Name}"
@@ -159,7 +185,7 @@ public sealed partial class ExportSessionViewModel : ObservableObject
         var values = OverrideOptions && OverrideValues is not null ? OverrideValues : ExportOptionValues.FromSettings(settings);
         var directory = OverrideOptions && !string.IsNullOrWhiteSpace(OverrideDirectory) ? OverrideDirectory : defaultDirectory;
         var platform = settings.CurrentVersioning.PlatformValue;
-        var queued = _items.Values.Where(i => i.State == ExportItemState.Queued && i.Export is not null).ToArray();
+        var queued = _items.Values.Where(i => i.State == ExportItemState.Queued && !i.IsDependency).ToArray();
         var files = new List<string>();
         if (queued.Length == 0 || IsRunning) return new ExportSummary(files, 0, false, TimeSpan.Zero, directory);
 
@@ -170,15 +196,15 @@ public sealed partial class ExportSessionViewModel : ObservableObject
         var cts = _cts = new CancellationTokenSource();
         _stopwatch.Restart();
 
-        // CUE4Parse can't write animations to glTF, and worlds only to USD
-        EMeshFormat FormatOf(UObject export) => export switch
+        // CUE4Parse can't write animations or lone skeletons to glTF, and worlds only to USD
+        EMeshFormat FormatOf(UObject? export) => export switch
         {
             UWorld => EMeshFormat.USD,
-            UAnimationAsset when values.MeshFormat == EMeshFormat.Gltf2 => EMeshFormat.USD,
+            UAnimationAsset or USkeleton when values.MeshFormat == EMeshFormat.Gltf2 => EMeshFormat.USD,
             _ => values.MeshFormat
         };
 
-        var runs = queued.GroupBy(i => FormatOf(i.Export!)).ToArray();
+        var runs = queued.GroupBy(i => FormatOf(i.Export)).ToArray();
         var remaining = queued.Length;
         var done = 0;
         try
@@ -240,7 +266,8 @@ public sealed partial class ExportSessionViewModel : ObservableObject
         var session = new ExportSession();
         foreach (var item in items)
         {
-            session.Add(item.Export!);
+            if (item.RawFile is { } file) session.Add(new RawDataExporter(file, item.Provider!));
+            else session.Add(item.Export!);
             item.State = ExportItemState.Exporting;
         }
         // Progress reports are posted, so some can land after RunAsync returns: each result is applied once,

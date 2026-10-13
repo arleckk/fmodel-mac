@@ -57,6 +57,7 @@ public sealed partial class AudioPlayerViewModel : ObservableObject, IDisposable
         Tracks.CollectionChanged += (_, _) => ApplyFilter();
     }
 
+    public AppSettings Settings => _settings;
     public PcmAudio? Audio => _output.Audio;
     public TimeSpan Position => _output.Position;
 

@@ -1,8 +1,10 @@
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using FModelMac.Services;
+using FModelMac.Services.Audio;
 using FModelMac.ViewModels;
 
 namespace FModelMac.Views;
@@ -48,10 +50,66 @@ public partial class AudioPlayerWindow : Window
         if (_vm.SelectedTrack is { } track) await _vm.PlayAsync(track);
     }
 
+    // FModel's Add Audio File: sounds from disk, next to the extracted ones (banks need their game, so not those)
+    private static readonly string[] LocalAudio = ["wem", "wav", "ogg", "flac", "at9", "xvag", "binka", "hca", "adx", "opus", "mp3"];
+
+    private async void OnAddFilesClick(object? sender, RoutedEventArgs e) => await AddFilesAsync();
+
+    private async Task AddFilesAsync()
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Add Audio Files",
+            AllowMultiple = true,
+            FileTypeFilter = [new FilePickerFileType("Audio Files") { Patterns = LocalAudio.Select(x => $"*.{x}").ToArray() }]
+        });
+        var sounds = new List<ExtractedSound>();
+        foreach (var path in files.Select(f => f.TryGetLocalPath()).OfType<string>())
+        {
+            var name = Path.GetFileNameWithoutExtension(path);
+            sounds.Add(new ExtractedSound(name, name, Path.GetExtension(path).TrimStart('.').ToLowerInvariant(), await File.ReadAllBytesAsync(path)));
+        }
+        _vm.Add(sounds, autoplay: false);
+    }
+
     protected override async void OnKeyDown(KeyEventArgs e)
     {
         // Leave typing in the search box alone
         if (e.Source is TextBox) { base.OnKeyDown(e); return; }
+
+        // Settings › Hotkeys (FModel's audio player keys) first, then the built-in ones
+        var hotkeys = _vm.Settings.Hotkeys;
+        if (hotkeys.AddAudio.IsTriggered(e))
+        {
+            e.Handled = true;
+            await AddFilesAsync();
+            return;
+        }
+        if (hotkeys.PlayPauseAudio.IsTriggered(e))
+        {
+            e.Handled = true;
+            await _vm.PlayPauseCommand.ExecuteAsync(null);
+            return;
+        }
+        if (hotkeys.PreviousAudio.IsTriggered(e))
+        {
+            e.Handled = true;
+            await _vm.PreviousCommand.ExecuteAsync(null);
+            return;
+        }
+        if (hotkeys.NextAudio.IsTriggered(e))
+        {
+            e.Handled = true;
+            await _vm.NextCommand.ExecuteAsync(null);
+            return;
+        }
+        if (hotkeys.RemoveAudio.IsTriggered(e))
+        {
+            e.Handled = true;
+            _vm.RemoveCommand.Execute(null);
+            return;
+        }
+
         switch (e.Key)
         {
             case Key.Space:

@@ -564,7 +564,12 @@ async Task ViewerTestAsync(string outputDir, string[] packages)
 {
     var vm = new MainViewModel();
     await vm.InitializeGameAsync();
-    var provider = vm.Archive!.Provider;
+    if (vm.Archive is null)
+    {
+        foreach (var log in vm.Logs) Console.WriteLine($"[{log.Kind}] {log.Message}");
+        return;
+    }
+    var provider = vm.Archive.Provider;
     Console.WriteLine($"Init: {vm.StatusText} | {vm.StatusExtra}");
 
     var viewer = new ModelViewerWindow { Width = 1280, Height = 800 };
@@ -686,7 +691,8 @@ async Task ViewerTestAsync(string outputDir, string[] packages)
             continue;
         }
 
-        var mesh = exports.FirstOrDefault(ViewerModel.CanView);
+        // A lone skeleton opens as bones only, like "Handle Skeletons as Empty Meshes"
+        var mesh = exports.FirstOrDefault(ViewerModel.CanView) ?? exports.OfType<USkeleton>().FirstOrDefault();
         if (mesh is null)
         {
             Console.WriteLine($"No mesh in {package}");
@@ -695,7 +701,8 @@ async Task ViewerTestAsync(string outputDir, string[] packages)
         var model = await Task.Run(() => ViewerModel.FromExport(mesh));
         viewer.AddModel(model);
         Console.WriteLine($"{model.Name}: {model.Kind}, {model.VertexCount:N0} verts, {model.TriangleCount:N0} tris, " +
-                          $"radius {model.Radius:0.#}, built in {watch.ElapsedMilliseconds} ms");
+                          $"radius {model.Radius:0.#}, {model.Bones?.Length ?? 0} bones, built in {watch.ElapsedMilliseconds} ms" +
+                          $"{(model.VertexCount == 0 ? $", bones shown: {viewer.ModelViewport.ShowBones}" : "")}");
         foreach (var section in model.Sections) Console.WriteLine($"    {section.MaterialName}: {section.Details}");
         foreach (var morph in model.Morphs)
             Console.WriteLine($"    morph {morph.Name}: {morph.Details} " + string.Join(" ", morph.VertexIndices.Select((v, i) =>
@@ -944,7 +951,162 @@ async Task RunAsync()
     Save(session, "13-export-session-options.png");
     session.Close();
 
+    await MinorSettingsTestAsync(window, vm);
+
     window.Close();
+}
+
+// Settings › Preview/Hotkeys/Themes, Keep Directory Structure, Export › Raw Data and Decompiled, skeletons as meshes
+async Task MinorSettingsTestAsync(MainWindow window, MainViewModel vm)
+{
+    GameFile File(string name) => vm.AllFiles().First(f => f.Name == name);
+    List<AssetItem> Items(params string[] names) => names.Select(n => new AssetItem(File(n))).ToList();
+
+    // Old settings had one "PreviewMeshes" switch; new ones round-trip hotkeys and the theme
+    var migrated = Newtonsoft.Json.JsonConvert.DeserializeObject<AppSettings>("{\"PreviewMeshes\": false}")!;
+    var roundTrip = new AppSettings { JsonHighlightTheme = JsonHighlightTheme.Nord };
+    roundTrip.Hotkeys.ExportProperties = new Hotkey(Key.P, KeyModifiers.Meta | KeyModifiers.Shift);
+    var json = Newtonsoft.Json.JsonConvert.SerializeObject(roundTrip);
+    var back = Newtonsoft.Json.JsonConvert.DeserializeObject<AppSettings>(json)!;
+    Console.WriteLine($"Settings: old PreviewMeshes=false -> static {migrated.PreviewStaticMeshes}, skeletal {migrated.PreviewSkeletalMeshes}, " +
+                      $"animations {migrated.PreviewAnimations}, worlds {migrated.PreviewWorlds} | round trip: theme {back.JsonHighlightTheme}, " +
+                      $"export properties '{back.Hotkeys.ExportProperties}', add tab '{back.Hotkeys.AssetAddTab}', none '{back.Hotkeys.ExportData}' | " +
+                      $"has PreviewMeshes: {json.Contains("PreviewMeshes")} | saved as {json[json.IndexOf("\"ExportProperties\"")..].Split(',')[0]}");
+
+    // Per-kind previews: skeletal meshes off, static meshes on
+    var opened = 0;
+    void OnModel(FModelMac.Rendering.ViewerModel _) => opened++;
+    vm.ModelReady += OnModel;
+    vm.Settings.PreviewSkeletalMeshes = false;
+    await vm.ExtractAsync(File("SK_Fixture.uasset"));
+    var skeletalOpened = opened;
+    await vm.ExtractAsync(File("SM_Fixture.uasset"));
+    var staticOpened = opened - skeletalOpened;
+    vm.Settings.PreviewSkeletalMeshes = true;
+
+    // Skeletons as empty meshes: in the viewer (bones only) and in Export › Model (USD, glTF can't)
+    await vm.ExtractAsync(File("SKEL_Fixture.uasset"));
+    var skeletonOff = opened - skeletalOpened - staticOpened;
+    vm.Settings.SaveSkeletonAsMesh = true;
+    await vm.ExtractAsync(File("SKEL_Fixture.uasset"));
+    var skeletonOn = opened - skeletalOpened - staticOpened - skeletonOff;
+    vm.ModelReady -= OnModel;
+    Console.WriteLine($"Preview: skeletal off -> {skeletalOpened} opened, static on -> {staticOpened} | skeleton: off {skeletonOff}, " +
+                      $"as mesh {skeletonOn} ({vm.Logs.LastOrDefault(l => l.Message.Contains("skeleton"))?.Message})");
+
+    // Export › Raw Data and Model (with the skeleton) through the Export Session
+    vm.ExportSession.Clear();
+    await vm.ExportRawDataCommand.ExecuteAsync(Items("SK_Fixture.uasset", "T_Mips.uasset"));
+    await vm.ExportModelCommand.ExecuteAsync(Items("SKEL_Fixture.uasset"));
+    await vm.RunExportSessionAsync();
+    foreach (var item in vm.ExportSession.Groups.SelectMany(g => g.Items).Where(i => !i.IsDependency))
+        Console.WriteLine($"  {item.ClassName}/{item.Name}: {item.StateText}{(item.Error is null ? "" : $" ({item.Error})")} -> " +
+                          $"{string.Join(", ", vm.ExportSession.Groups.SelectMany(g => g.Items).Where(i => i == item).Select(i => i.FirstFile is null ? "-" : Path.GetRelativePath(vm.Settings.OutputDir, i.FirstFile)))}");
+    var rawDir = Path.Combine(vm.Settings.ExportsDir, Path.GetDirectoryName(File("SK_Fixture.uasset").Path)!);
+    Console.WriteLine($"Raw data: {string.Join(", ", Directory.Exists(rawDir) ? Directory.GetFiles(rawDir, "SK_Fixture.*").Select(Path.GetFileName) : [])}");
+    vm.Settings.SaveSkeletonAsMesh = false;
+
+    // Keep Directory Structure off: properties and decompiled blueprints land straight in Exports
+    vm.Settings.KeepDirectoryStructure = false;
+    await vm.ExportPropertiesCommand.ExecuteAsync(Items("T_Mips.uasset"));
+    var flatJson = Path.Combine(vm.Settings.ExportsDir, "T_Mips.json");
+    await vm.ExportCodeCommand.ExecuteAsync(Items("BP_Components.uasset"));
+    var flatCpp = Path.Combine(vm.Settings.ExportsDir, "BP_Components.cpp");
+    Console.WriteLine($"Keep structure off: {Path.GetFileName(flatJson)} {System.IO.File.Exists(flatJson)}, {Path.GetFileName(flatCpp)} {System.IO.File.Exists(flatCpp)} " +
+                      $"({(System.IO.File.Exists(flatCpp) ? System.IO.File.ReadLines(flatCpp).Count() : 0)} lines)");
+    vm.Settings.KeepDirectoryStructure = true;
+    System.IO.File.Delete(flatJson);
+    System.IO.File.Delete(flatCpp);
+
+    // Hotkeys, pressed for real on the main window
+    void Press(Key key, RawInputModifiers modifiers = RawInputModifiers.None)
+    {
+        window.KeyPress(key, modifiers);
+        window.KeyRelease(key, modifiers);
+        Dispatcher.UIThread.RunJobs();
+    }
+    var packages = window.FindControl<ListBox>("PackagesList")!;
+    vm.NavigateToFolder("CUE4ParseFixtures/Content/Fixtures/Textures");
+    vm.SelectedLeftTab = 2;
+    Dispatcher.UIThread.RunJobs();
+    packages.Focus();
+    var tabs = vm.Tabs.Count;
+    Press(Key.T, RawInputModifiers.Meta);
+    var added = vm.Tabs.Count - tabs;
+    var index = vm.Tabs.IndexOf(vm.SelectedTab!);
+    Press(Key.Q);
+    var left = vm.Tabs.IndexOf(vm.SelectedTab!);
+    Press(Key.E);
+    var right = vm.Tabs.IndexOf(vm.SelectedTab!);
+    Press(Key.W, RawInputModifiers.Meta);
+    var removed = tabs + added - vm.Tabs.Count;
+    Press(Key.A);
+    var dirLeft = vm.SelectedLeftTab;
+    Press(Key.D);
+    var dirRight = vm.SelectedLeftTab;
+    Press(Key.A, RawInputModifiers.Meta); // ⌘A is not A
+    var cmdA = vm.SelectedLeftTab;
+    var searchBox = window.GetVisualDescendants().OfType<TextBox>().First(t => t.IsEffectivelyVisible && !t.IsReadOnly);
+    searchBox.Focus();
+    Press(Key.A);
+    var typing = vm.SelectedLeftTab;
+    Console.WriteLine($"Hotkeys: ⌘T +{added} tab | Q {index}->{left} | E ->{right} | ⌘W -{removed} tab | A ->{dirLeft} | D ->{dirRight} | " +
+                      $"⌘A ->{cmdA} | A while typing ->{typing}");
+    vm.Settings.Hotkeys.ExportProperties = new Hotkey(Key.P, KeyModifiers.Meta | KeyModifiers.Shift);
+    vm.SelectedLeftTab = 2;
+    Dispatcher.UIThread.RunJobs();
+    packages.SelectedItems!.Clear();
+    var g8 = vm.Packages.First(p => p.Name == "T_G8.uasset");
+    packages.SelectedItems.Add(g8);
+    packages.ScrollIntoView(g8);
+    Dispatcher.UIThread.RunJobs();
+    (packages.ContainerFromItem(g8) as InputElement)?.Focus();
+    var hotkeyJson = Path.Combine(vm.Settings.ExportsDir, File("T_G8.uasset").PathWithoutExtension + ".json");
+    if (System.IO.File.Exists(hotkeyJson)) System.IO.File.Delete(hotkeyJson);
+    Press(Key.P, RawInputModifiers.Meta | RawInputModifiers.Shift);
+    await WaitFor(() => System.IO.File.Exists(hotkeyJson), "the export hotkey");
+    Console.WriteLine($"  ⌘⇧P (Export Properties): {System.IO.File.Exists(hotkeyJson)} | {vm.Logs[^1].Message}");
+
+    // JSON theme on the open tab, and the Settings tabs
+    await vm.ExtractAsync(File("SM_Fixture.uasset"));
+    AppResources.SetJsonTheme(JsonHighlightTheme.Monokai);
+    var field = AppResources.Highlighting("Json")!.GetNamedColor("FieldName");
+    var escape = AppResources.Highlighting("Json")!.GetNamedColor("Escape");
+    Console.WriteLine($"JSON theme Monokai: field name {field.Foreground}, escape {escape.Foreground} bold {escape.FontWeight}");
+    await Task.Delay(200);
+    Save(window, "17-json-theme.png");
+    AppResources.SetJsonTheme(JsonHighlightTheme.Default);
+
+    vm.Settings.Hotkeys.ExportData = new Hotkey(Key.F5);
+    var settings = new SettingsWindow(vm.Settings);
+    settings.Show();
+    var settingsTabs = settings.FindControl<TabControl>("Tabs")!;
+    settingsTabs.SelectedIndex = 2;
+    await Task.Delay(200);
+    Save(settings, "18-settings-preview.png");
+    settingsTabs.SelectedIndex = 3;
+    await Task.Delay(200);
+    var hotkeyBox = settings.GetVisualDescendants().OfType<FModelMac.Controls.HotkeyBox>().First();
+    hotkeyBox.Focus();
+    settings.KeyPress(Key.Left, RawInputModifiers.Shift);
+    Dispatcher.UIThread.RunJobs();
+    var captured = hotkeyBox.Hotkey.ToString();
+    settings.KeyPress(Key.Back, RawInputModifiers.None);
+    Dispatcher.UIThread.RunJobs();
+    var cleared = hotkeyBox.Hotkey.IsAssigned;
+    settings.KeyPress(Key.A, RawInputModifiers.None);
+    Dispatcher.UIThread.RunJobs();
+    Console.WriteLine($"Hotkey box: ⇧← -> '{captured}' | Backspace clears: {!cleared} | A -> '{hotkeyBox.Hotkey}' | settings still open: {settings.IsVisible}");
+    Save(settings, "19-settings-hotkeys.png");
+    settingsTabs.SelectedIndex = 6;
+    settings.FindControl<ComboBox>("JsonThemeBox")!.SelectedIndex = (int) JsonHighlightTheme.TokyoNight;
+    await Task.Delay(300);
+    Save(settings, "20-settings-themes.png");
+    settingsTabs.SelectedIndex = 5;
+    await Task.Delay(200);
+    Save(settings, "21-settings-endpoints.png");
+    settings.Close();
+    vm.Settings.Hotkeys = new HotkeySettings();
 }
 
 // Real pointer/keyboard input on the folder tree: arrow button, item click, Up/Down/Left/Right

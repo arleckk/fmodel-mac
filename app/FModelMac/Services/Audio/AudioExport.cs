@@ -5,7 +5,7 @@ public static class AudioExport
 {
     public static string Save(ExtractedSound sound, AppSettings settings, PcmAudio? decoded = null)
     {
-        var basePath = Path.Combine(settings.ExportsDir, sound.Path);
+        var basePath = settings.ExportPath(sound.Path);
         Directory.CreateDirectory(Path.GetDirectoryName(basePath)!);
 
         if (!settings.ConvertAudioToWav || sound.Extension == "wav" && LooksLikeWav(sound.Data))

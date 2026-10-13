@@ -1,6 +1,8 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using FModelMac.Controls;
 using FModelMac.Services;
 using FModelMac.Services.Audio;
 using CUE4Parse_Conversion.Options;
@@ -22,6 +24,15 @@ public partial class SettingsWindow : Window
     /// <summary>True when the packages language changed: localized texts must be loaded again.</summary>
     public bool LanguageChanged { get; private set; }
 
+    /// <summary>True when the AES endpoint changed: ask it for keys on the next mount whatever "AES Reload" says.</summary>
+    public bool AesEndpointChanged { get; private set; }
+
+    private static readonly AesReload[] AesReloads = Enum.GetValues<AesReload>();
+    private static readonly JsonHighlightTheme[] JsonThemeValues = Enum.GetValues<JsonHighlightTheme>();
+    private readonly HotkeySettings _hotkeys;
+    private readonly Dictionary<string, HotkeyBox> _hotkeyBoxes = [];
+    private readonly AvaloniaEdit.Highlighting.IHighlightingDefinition? _previewHighlighting = AppResources.LoadHighlighting("Json");
+
     private readonly VersioningSettings _versioning;
     private static readonly string[] UeVersions = Enum.GetNames<EGame>();
     private static readonly ETexturePlatform[] Platforms = Enum.GetValues<ETexturePlatform>();
@@ -36,7 +47,20 @@ public partial class SettingsWindow : Window
         InitializeComponent();
         OutputBox.Text = settings.OutputDir;
         UsmapBox.Text = settings.UsmapPath;
-        PreviewMeshesBox.IsChecked = settings.PreviewMeshes;
+        KeepStructureBox.IsChecked = settings.KeepDirectoryStructure;
+        PreviewStaticBox.IsChecked = settings.PreviewStaticMeshes;
+        PreviewSkeletalBox.IsChecked = settings.PreviewSkeletalMeshes;
+        PreviewAnimationsBox.IsChecked = settings.PreviewAnimations;
+        PreviewWorldsBox.IsChecked = settings.PreviewWorlds;
+        SkeletonAsMeshBox.IsChecked = settings.SaveSkeletonAsMesh;
+        AesReloadBox.ItemsSource = AesReloads.Select(r => r.GetDescription()).ToArray();
+        AesReloadBox.SelectedIndex = Math.Max(0, Array.IndexOf(AesReloads, settings.AesReload));
+        _hotkeys = settings.Hotkeys.Clone();
+        BuildHotkeys();
+        JsonPreview.SyntaxHighlighting = _previewHighlighting;
+        JsonPreview.Text = JsonPreviewText;
+        JsonThemeBox.ItemsSource = JsonThemeValues.Select(t => t.GetDescription()).ToArray();
+        JsonThemeBox.SelectedIndex = Math.Max(0, Array.IndexOf(JsonThemeValues, settings.JsonHighlightTheme));
         ScriptDataBox.IsChecked = settings.ReadScriptData;
         ShaderMapsBox.IsChecked = settings.ReadShaderMaps;
         ExportImmediatelyBox.IsChecked = settings.ExportImmediately;
@@ -149,11 +173,93 @@ public partial class SettingsWindow : Window
 
     private void OnClearUsmapClick(object? sender, RoutedEventArgs e) => UsmapBox.Text = "";
 
+    // ---------- Hotkeys ----------
+
+    private void BuildHotkeys()
+    {
+        string? section = null;
+        foreach (var (name, label, property) in HotkeySettings.Entries)
+        {
+            if (name != section)
+            {
+                HotkeysPanel.Children.Add(new SectionSeparator { Text = name, Margin = section is null ? new Thickness(0, 0, 0, 8) : new Thickness(0, 14, 0, 8) });
+                section = name;
+            }
+            var box = new HotkeyBox { Hotkey = _hotkeys.Get(property) };
+            box.PropertyChanged += (_, e) =>
+            {
+                if (e.Property == HotkeyBox.HotkeyProperty) _hotkeys.Set(property, box.Hotkey);
+            };
+            _hotkeyBoxes[property] = box;
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("220,10,*"), Margin = new Thickness(0, 0, 0, 4) };
+            row.Children.Add(new TextBlock { Text = label, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center });
+            Grid.SetColumn(box, 2);
+            row.Children.Add(box);
+            HotkeysPanel.Children.Add(row);
+        }
+    }
+
+    private void OnResetHotkeysClick(object? sender, RoutedEventArgs e)
+    {
+        var defaults = new HotkeySettings();
+        foreach (var (property, box) in _hotkeyBoxes) box.Hotkey = defaults.Get(property);
+    }
+
+    // ---------- Themes ----------
+
+    private const string JsonPreviewText =
+        """
+        {
+          "title": "This is an example JSON",
+          "environment": "production",
+          "enabled": true,
+          "version": 4,
+          "scale": 0.92,
+          "features": {
+            "previewAssets": true,
+            "autoSave": false,
+            "maxRecentFiles": 12
+          },
+          "export": {
+            "rootDirectory": "~/Documents/FModelMac/Output/Exports",
+            "keepDirectoryStructure": true,
+            "formats": [
+              "json",
+              "png",
+              "wav"
+            ]
+          },
+          "paths": [
+            "/Game/Characters/Hero",
+            "/Game/UI/Widgets",
+            "/Game/Audio/Music"
+          ],
+          "metadata": {
+            "lastOpened": "2026-06-20T14:30:00Z",
+            "experimental": false,
+            "fallbackTheme": null,
+            "escapeExample": "Line one\nLine two\tTabbed \"quoted\"",
+            "accentColor": "#FFC857"
+          }
+        }
+        """;
+
+    private JsonHighlightTheme SelectedJsonTheme => JsonThemeValues[Math.Max(0, JsonThemeBox.SelectedIndex)];
+
+    // The preview has its own copy of the definition: open tabs only change on OK
+    private void OnJsonThemeChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (JsonPreview is null) return;
+        JsonThemes.Apply(_previewHighlighting, SelectedJsonTheme);
+        JsonPreview.TextArea.TextView.Redraw();
+    }
+
     private void OnOkClick(object? sender, RoutedEventArgs e)
     {
         var usmap = string.IsNullOrWhiteSpace(UsmapBox.Text) ? null : UsmapBox.Text.Trim();
+        AesEndpointChanged = !Same(_aesEndpoint, _settings.AesEndpoint);
         RequiresReload = !string.Equals(usmap, _settings.UsmapPath, StringComparison.Ordinal) ||
-                         !Same(_aesEndpoint, _settings.AesEndpoint) || !Same(_mappingEndpoint, _settings.MappingEndpoint);
+                         AesEndpointChanged || !Same(_mappingEndpoint, _settings.MappingEndpoint);
         _versioning.Platform = Platforms[Math.Max(0, PlatformBox.SelectedIndex)].ToString();
         var game = UeVersionBox.SelectedItem as string ?? _settings.Game;
         RequiresReload |= !game.Equals(_settings.Game, StringComparison.OrdinalIgnoreCase) ||
@@ -168,7 +274,16 @@ public partial class SettingsWindow : Window
 
         if (!string.IsNullOrWhiteSpace(OutputBox.Text)) _settings.OutputDir = OutputBox.Text.Trim();
         _settings.UsmapPath = usmap;
-        _settings.PreviewMeshes = PreviewMeshesBox.IsChecked == true;
+        _settings.KeepDirectoryStructure = KeepStructureBox.IsChecked == true;
+        _settings.PreviewStaticMeshes = PreviewStaticBox.IsChecked == true;
+        _settings.PreviewSkeletalMeshes = PreviewSkeletalBox.IsChecked == true;
+        _settings.PreviewAnimations = PreviewAnimationsBox.IsChecked == true;
+        _settings.PreviewWorlds = PreviewWorldsBox.IsChecked == true;
+        _settings.SaveSkeletonAsMesh = SkeletonAsMeshBox.IsChecked == true;
+        _settings.AesReload = AesReloads[Math.Max(0, AesReloadBox.SelectedIndex)];
+        _settings.Hotkeys = _hotkeys;
+        _settings.JsonHighlightTheme = SelectedJsonTheme;
+        AppResources.SetJsonTheme(SelectedJsonTheme);
         _settings.ReadScriptData = ScriptDataBox.IsChecked == true;
         _settings.ReadShaderMaps = ShaderMapsBox.IsChecked == true;
         _settings.ExportImmediately = ExportImmediatelyBox.IsChecked == true;

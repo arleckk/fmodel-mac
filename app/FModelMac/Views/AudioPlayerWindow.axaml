@@ -51,6 +51,10 @@
                             <MenuItem Header="Save Playlist" Command="{Binding SavePlaylistCommand}">
                                 <MenuItem.Icon><c:Glyph Data="{StaticResource SavePlaylistIcon}" /></MenuItem.Icon>
                             </MenuItem>
+                            <Separator />
+                            <MenuItem Header="Add Audio Files…" Click="OnAddFilesClick">
+                                <MenuItem.Icon><c:Glyph Data="{StaticResource AudioIcon}" /></MenuItem.Icon>
+                            </MenuItem>
                         </ContextMenu>
                     </ListBox.ContextMenu>
                     <ListBox.ItemTemplate>

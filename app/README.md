@@ -63,8 +63,8 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
 - **Folders:** árbol aplanado y virtualizado con los íconos de carpeta de FModel, contador café de
   paquetes, flecha que rota, "Bring Selected Folder To View" y "Collapse All".
 - **N Packages:** búsqueda, breadcrumb clicable, lista con íconos por tipo y menú contextual
-  (Extract in New Tab, Show Metadata, Find References, Decompile Blueprint, Export › Model/World/
-  Animation/Properties/Texture, Copy › rutas). Las pestañas de assets tienen su propio menú (Close
+  (Extract in New Tab, Show Metadata, Find References, Decompile Blueprint, Export › Raw Data/
+  Properties/Texture/Model/World/Animation/Audio/Decompiled Blueprints, Copy › rutas). Las pestañas de assets tienen su propio menú (Close
   Tab/All/Other, Save Text…, Show Metadata, Find References, Decompile Blueprint).
 - **Decompile Blueprint:** las clases del paquete como pseudo C++ (variables con sus valores por
   defecto y funciones a partir del bytecode Kismet), en una pestaña nueva con resaltado de C++. Usa
@@ -124,7 +124,28 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
   y limpiar.
 - **Barra de estado** que cambia de color según el estado.
 - **Diálogos:** Directory Selector, AES Manager (clave estática y dinámicas por GUID), Settings
-  (pestañas General, Export, Audio y Endpoints), Search y About.
+  (pestañas General, Export, Preview, Hotkeys, Audio, Endpoints y Themes), Search y About.
+- **Export › Raw Data y Decompiled Blueprints:** Raw Data pasa por la Export Session con el
+  `RawDataExporter` de CUE4Parse (como FModel) y escribe los archivos del paquete tal cual (`.uasset`,
+  `.uexp`, `.ubulk`…). Decompiled Blueprints guarda el pseudo C++ de Decompile Blueprint como `.cpp`.
+- **Keep Directory Structure (Settings › General):** encendido por defecto, como en FModel. Apagado,
+  las propiedades, los `.cpp` y el audio se guardan directo en `Exports/` sin la ruta del paquete. La
+  Export Session siempre conserva la estructura (CUE4Parse la arma).
+- **Settings › Preview:** qué abre el visor 3D al extraer, por tipo (mallas estáticas, esqueléticas,
+  animaciones, mundos), y "Handle Skeletons as Empty Meshes": un `USkeleton` se abre como huesos
+  solos (se pueden reproducir animaciones sobre él) y Export › Model también lo toma; como glTF no
+  admite un esqueleto solo, se exporta en USD. La opción vieja "preview meshes" se migra sola.
+- **Settings › Hotkeys:** los atajos de FModel, configurables, con ⌘ en vez de Ctrl: cambiar de
+  pestaña del panel izquierdo (A/D) y de asset (Q/E), agregar y quitar pestaña (⌘T/⌘W), las ocho
+  exportaciones (sin asignar por defecto; se muestran en el menú Export) y los del Audio Player
+  (⌘N agrega archivos de audio del disco, K, J, L, X). Los modificadores deben coincidir exactos,
+  así ⌘A no dispara A, y las teclas solas no se disparan mientras escribes en un campo de texto.
+- **AES Reload at Launch (Settings › Endpoints):** Always, Never u Once Per Day (por defecto, como en
+  FModel; por carpeta del juego). Si cambias el endpoint de AES se consulta al dar OK sin importar
+  la opción.
+- **Settings › Themes:** los 16 JSON Highlight Themes de FModel (Default, Nord, Tokyo Night, Monokai,
+  Rosé Pine…) con su vista previa. Se aplican al dar OK a todas las pestañas abiertas; además se
+  colorean las secuencias de escape (`\n`, `\"`), que el `.xshd` de FModel no distingue.
 - **Opciones de exportación (Settings › Export):** las de FModel: Mesh Format (glTF, USD,
   UEFormat, ActorX), Mesh Quality (LODs), Socket Format, Compression (sólo UEFormat), Nanite
   Format, morph targets; Texture Format (PNG, JPEG, TGA, WebP), Texture Quality (JPEG/WebP),
@@ -154,7 +175,7 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
 - **Endpoints (Settings › Endpoints):** como en FModel, una URL que devuelve JSON más una expresión
   JSONPath. El de AES da la llave principal y, opcionalmente, la lista de llaves dinámicas
   (`guid`/`key`); el de mappings, la URL del `.usmap`/`.jmap` y opcionalmente su nombre. Cada vez
-  que se monta el juego se refrescan las llaves y se descarga el mapping (una vez; queda en caché
+  que se monta el juego se refrescan las llaves (según AES Reload at Launch) y se descarga el mapping (una vez; queda en caché
   por endpoint en `Mappings/` y se reutiliza si el endpoint falla). Un mapping local en Settings
   tiene prioridad. El editor (Configure…) tiene Send/Test, presets de Fortnite y VALORANT
   (uedb.dev, los mismos que FModel), y sólo deja guardar una configuración probada. Al montar

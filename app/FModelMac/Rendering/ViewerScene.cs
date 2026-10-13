@@ -73,7 +73,7 @@ public sealed partial class SceneItem : ObservableObject
     {
         Name = model.Name,
         Kind = model.Kind,
-        Details = $"{model.Kind} · {model.VertexCount:N0} vertices",
+        Details = model is { VertexCount: 0, Bones.Length: > 0 } ? $"{model.Kind} · {model.Bones.Length:N0} bones" : $"{model.Kind} · {model.VertexCount:N0} vertices",
         Objects = [new SceneObject(model, [Matrix4x4.Identity])]
     }.WithBounds();
 

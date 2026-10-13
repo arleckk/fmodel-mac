@@ -2,9 +2,10 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:c="using:FModelMac.Controls"
         xmlns:v="using:FModelMac.Views"
+        xmlns:ae="using:AvaloniaEdit"
         x:Class="FModelMac.Views.SettingsWindow"
         Title="Settings"
-        Width="660" Height="600" CanResize="False"
+        Width="700" Height="620" CanResize="False"
         WindowStartupLocation="CenterOwner">
     <DockPanel>
         <Border DockPanel.Dock="Bottom" Background="{StaticResource Layer1BackgroundBrush}">
@@ -27,8 +28,9 @@
                             <TextBox x:Name="OutputBox" Grid.Column="2" />
                             <Button Grid.Column="4" Content="..." Click="OnBrowseOutputClick" />
                         </Grid>
+                        <CheckBox x:Name="KeepStructureBox" Margin="160,6,0,0" Content="Keep Directory Structure" />
                         <TextBlock Classes="dim" FontSize="11" Margin="160,4,0,0" TextWrapping="Wrap"
-                                   Text="Properties and textures are saved under Exports, mirroring the package path." />
+                                   Text="Exports go under Output/Exports. Properties, decompiled blueprints and audio mirror the package path, or all land in Exports with this off. The Export Session always keeps the structure." />
 
                         <c:SectionSeparator Text="GAME" />
                         <Grid ColumnDefinitions="150,10,*" RowDefinitions="Auto,8,Auto,8,Auto,8,Auto">
@@ -73,10 +75,45 @@
                             <CheckBox x:Name="ExportImmediatelyBox" Margin="180,0,0,0" Content="Export immediately" />
                             <TextBlock Classes="dim" FontSize="11" Margin="180,4,0,0" TextWrapping="Wrap"
                                        Text="Off, like FModel: Export › Model, Animation, World and Texture queue the assets in Views › Export Session, where you export them all at once. On: they're exported right away." />
-                            <CheckBox x:Name="PreviewMeshesBox" Margin="180,8,0,0" Content="Open meshes in the 3D viewer when extracting them" />
                             <v:ExportOptionsPanel x:Name="ExportOptions" />
                         </StackPanel>
                     </ScrollViewer>
+                </Border>
+            </TabItem>
+
+            <!-- PREVIEW: what extracting a package opens in the 3D viewer -->
+            <TabItem Header="Preview">
+                <Border Background="{StaticResource Layer2BackgroundBrush}" Padding="10">
+                    <StackPanel>
+                        <c:SectionSeparator Text="3D VIEWER" Margin="0,0,0,8" />
+                        <CheckBox x:Name="PreviewStaticBox" Margin="160,0,0,0" Content="Preview Static Meshes" />
+                        <CheckBox x:Name="PreviewSkeletalBox" Margin="160,4,0,0" Content="Preview Skeletal Meshes" />
+                        <CheckBox x:Name="PreviewAnimationsBox" Margin="160,4,0,0" Content="Preview Animations" />
+                        <CheckBox x:Name="PreviewWorldsBox" Margin="160,4,0,0" Content="Preview Worlds (.umap)" />
+                        <TextBlock Classes="dim" FontSize="11" Margin="160,4,0,0" TextWrapping="Wrap"
+                                   Text="Double-clicking a package of that kind also opens it in Views › 3D Viewer. Animations play on the mesh selected in the viewer." />
+
+                        <c:SectionSeparator Text="SKELETONS" />
+                        <CheckBox x:Name="SkeletonAsMeshBox" Margin="160,0,0,0" Content="Handle Skeletons as Empty Meshes" />
+                        <TextBlock Classes="dim" FontSize="11" Margin="160,4,0,0" TextWrapping="Wrap"
+                                   Text="Skeletons open in the 3D viewer as bones only (animations can play on them), and Export › Model takes them too. glTF can't hold a lone skeleton, so they're exported as USD." />
+                    </StackPanel>
+                </Border>
+            </TabItem>
+
+            <!-- HOTKEYS: FModel's keybindings, ⌘ instead of Ctrl -->
+            <TabItem Header="Hotkeys">
+                <Border Background="{StaticResource Layer2BackgroundBrush}" Padding="10,10,4,10">
+                    <DockPanel>
+                        <Grid DockPanel.Dock="Bottom" ColumnDefinitions="*,Auto" Margin="0,8,6,0">
+                            <TextBlock Classes="dim" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center"
+                                       Text="Click a box and press the keys. Delete, Backspace or Esc clears it. Single keys don't fire while you type in a text field." />
+                            <Button Grid.Column="1" Margin="10,0,0,0" Content="Reset to Defaults" Click="OnResetHotkeysClick" />
+                        </Grid>
+                        <ScrollViewer HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
+                            <StackPanel x:Name="HotkeysPanel" />
+                        </ScrollViewer>
+                    </DockPanel>
                 </Border>
             </TabItem>
 
@@ -119,8 +156,12 @@
                             <TextBlock x:Name="MappingEndpointText" Grid.Row="2" Grid.Column="2" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                             <Button Grid.Row="2" Grid.Column="4" Content="Configure…" Click="OnMappingEndpointClick" />
                         </Grid>
+                        <Grid ColumnDefinitions="150,10,*" Margin="0,8,0,0">
+                            <TextBlock Text="AES Reload at Launch" VerticalAlignment="Center" />
+                            <ComboBox x:Name="AesReloadBox" Grid.Column="2" HorizontalAlignment="Stretch" />
+                        </Grid>
                         <TextBlock Classes="dim" FontSize="11" Margin="160,4,0,0" TextWrapping="Wrap"
-                                   Text="Checked every time the game is mounted: the AES endpoint replaces the saved keys, the mapping is downloaded once and cached. Presets for Fortnite and VALORANT, like FModel." />
+                                   Text="When the game is mounted, the AES endpoint replaces the saved keys (always, never or once per day); the mapping is downloaded once and cached. Presets for Fortnite and VALORANT, like FModel." />
 
                         <c:SectionSeparator Text="MAPPINGS" />
                         <Grid ColumnDefinitions="150,10,*,5,Auto,5,Auto">
@@ -132,6 +173,25 @@
                             </Button>
                         </Grid>
                     </StackPanel>
+                </Border>
+            </TabItem>
+            <!-- THEMES: FModel's JSON highlight themes, with its preview -->
+            <TabItem Header="Themes">
+                <Border Background="{StaticResource Layer2BackgroundBrush}" Padding="10">
+                    <DockPanel>
+                        <Grid DockPanel.Dock="Top" ColumnDefinitions="150,10,*" Margin="0,0,0,8">
+                            <TextBlock Text="JSON Highlight Theme" VerticalAlignment="Center" />
+                            <ComboBox x:Name="JsonThemeBox" Grid.Column="2" HorizontalAlignment="Stretch" MaxDropDownHeight="420"
+                                      SelectionChanged="OnJsonThemeChanged" />
+                        </Grid>
+                        <Border Background="{StaticResource Layer1BackgroundBrush}" Padding="1">
+                            <ae:TextEditor x:Name="JsonPreview" IsReadOnly="True" ShowLineNumbers="True"
+                                           FontFamily="Menlo, Consolas, monospace" FontSize="12" Padding="8"
+                                           Foreground="{StaticResource EditorForegroundBrush}" LineNumbersForeground="#6E7381"
+                                           Background="{StaticResource Layer3BackgroundBrush}"
+                                           HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" />
+                        </Border>
+                    </DockPanel>
                 </Border>
             </TabItem>
         </TabControl>

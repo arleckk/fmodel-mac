@@ -21,11 +21,33 @@ public static class AppResources
 
     public static IHighlightingDefinition? Highlighting(string? name) => name is null ? null : Highlightings.GetOrAdd(name, static n =>
     {
-        var uri = new Uri($"avares://FModelMac/Assets/Highlighting/{n}.xshd");
+        var definition = LoadHighlighting(n);
+        if (n.Equals("Json", StringComparison.OrdinalIgnoreCase)) JsonThemes.Apply(definition, JsonTheme);
+        return definition;
+    });
+
+    /// <summary>A new copy of a definition, for an editor that recolors it on its own (the Settings preview).</summary>
+    public static IHighlightingDefinition? LoadHighlighting(string name)
+    {
+        var uri = new Uri($"avares://FModelMac/Assets/Highlighting/{name}.xshd");
         if (!AssetLoader.Exists(uri)) return null;
         using var reader = XmlReader.Create(AssetLoader.Open(uri));
         return HighlightingLoader.Load(reader, HighlightingManager.Instance);
-    });
+    }
+
+    public static JsonHighlightTheme JsonTheme { get; private set; }
+
+    /// <summary>Raised after the JSON theme changes, so open editors redraw with the new colors.</summary>
+    public static event Action? HighlightingChanged;
+
+    /// <summary>FModel's JSON Highlight Theme: recolors the shared JSON definition every editor uses.</summary>
+    public static void SetJsonTheme(JsonHighlightTheme theme)
+    {
+        var changed = theme != JsonTheme;
+        JsonTheme = theme;
+        if (Highlightings.TryGetValue("Json", out var json)) JsonThemes.Apply(json, theme);
+        if (changed) HighlightingChanged?.Invoke();
+    }
 
     // Same mapping as FModel's FolderTreeIconConverter
     public static Bitmap? FolderIcon(string folderName) => folderName.ToLowerInvariant() switch

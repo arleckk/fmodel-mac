@@ -19,9 +19,10 @@ namespace FModelMac.Services;
 /// <param name="Animation">First animation (sequence, montage, composite, blend space) of the package, to play in the 3D viewer.</param>
 /// <param name="World">The map of a .umap, for the 3D viewer.</param>
 /// <param name="Sounds">Sounds of the package or file, for the audio player.</param>
+/// <param name="Skeleton">The skeleton of the package, shown as an empty mesh with "Handle Skeletons as Empty Meshes".</param>
 public sealed record PreviewResult(string Text, string? Highlight, byte[]? Image, string? ImageName,
     UObject? Mesh = null, UAnimationAsset? Animation = null, UWorld? World = null,
-    IReadOnlyList<ExtractedSound>? Sounds = null, IReadOnlyList<string>? SoundWarnings = null);
+    IReadOnlyList<ExtractedSound>? Sounds = null, IReadOnlyList<string>? SoundWarnings = null, USkeleton? Skeleton = null);
 
 public static class AssetPreview
 {
@@ -53,7 +54,7 @@ public static class AssetPreview
             return new PreviewResult(Truncate(json), "Json", png, png is null ? null : texture!.Name,
                 exports.FirstOrDefault(ViewerModel.CanView),
                 exports.OfType<UAnimationAsset>().FirstOrDefault(a => a is UAnimSequence or UAnimMontage or UAnimComposite or UBlendSpaceBase),
-                exports.OfType<UWorld>().FirstOrDefault(), sounds, warnings);
+                exports.OfType<UWorld>().FirstOrDefault(), sounds, warnings, exports.OfType<USkeleton>().FirstOrDefault());
         }
 
         if (audio is not null && SoundExtractor.AudioExtensions.Contains(file.Extension))

@@ -28,7 +28,14 @@ public partial class MainWindow : Window
         // before a bubbling KeyDown handler would ever see them
         FolderList.AddHandler(KeyDownEvent, OnFolderKeyDown, RoutingStrategies.Tunnel);
         PackagesList.AddHandler(KeyDownEvent, OnPackageKeyDown, RoutingStrategies.Tunnel);
+        AddHandler(KeyDownEvent, OnHotkeyDown, RoutingStrategies.Tunnel);
+
+        // Settings › Themes recolors the shared JSON definition: redraw what's on screen
+        AppResources.HighlightingChanged += OnHighlightingChanged;
+        Closed += (_, _) => AppResources.HighlightingChanged -= OnHighlightingChanged;
     }
+
+    private void OnHighlightingChanged() => Editor.TextArea.TextView.Redraw();
 
     private MainViewModel Vm => _vm ?? throw new InvalidOperationException("No view model");
 
@@ -52,6 +59,8 @@ public partial class MainWindow : Window
         if (_vm is null) return;
 
         _vm.SetClipboardText = text => Clipboard?.SetTextAsync(text) ?? Task.CompletedTask;
+        AppResources.SetJsonTheme(_vm.Settings.JsonHighlightTheme);
+        ShowHotkeysInMenus();
         _vm.PickBackupFile = PickBackupFileAsync;
         _vm.MergerImageAdded += OnMergerImageAdded;
         _vm.Favorites.CollectionChanged += OnFavoritesChanged;
@@ -208,7 +217,8 @@ public partial class MainWindow : Window
         {
             Vm.SaveSettings();
             Vm.ApplyReadOptions();
-            if (dialog.RequiresReload) await Vm.InitializeGameAsync(); // also loads the localization
+            ShowHotkeysInMenus();
+            if (dialog.RequiresReload) await Vm.InitializeGameAsync(dialog.AesEndpointChanged); // also loads the localization
             else if (dialog.LanguageChanged) await Vm.LoadLocalizationAsync();
         }
     }
@@ -408,6 +418,69 @@ public partial class MainWindow : Window
         if (Vm.SelectedFolder is not { } folder) return;
         if (folder.HasPackages) Vm.SelectedLeftTab = 2;
         else Vm.Folders.Toggle(folder);
+    }
+
+    // ---------- Hotkeys (Settings › Hotkeys) ----------
+
+    // FModel's OnWindowKeyDown: tab switching and exports. Not while typing in a text field.
+    private async void OnHotkeyDown(object? sender, KeyEventArgs e)
+    {
+        if (_vm is null || e.Source is TextBox { IsReadOnly: false } || e.Handled) return;
+        var hotkeys = _vm.Settings.Hotkeys;
+
+        if (hotkeys.AssetAddTab.IsTriggered(e)) _vm.AddTabCommand.Execute(null);
+        else if (hotkeys.AssetRemoveTab.IsTriggered(e)) _vm.CloseTabCommand.Execute(null);
+        else if (hotkeys.AssetLeftTab.IsTriggered(e)) SwitchTab(-1);
+        else if (hotkeys.AssetRightTab.IsTriggered(e)) SwitchTab(1);
+        else if (hotkeys.DirLeftTab.IsTriggered(e)) _vm.SelectedLeftTab = Math.Max(0, _vm.SelectedLeftTab - 1);
+        else if (hotkeys.DirRightTab.IsTriggered(e)) _vm.SelectedLeftTab = Math.Min(2, _vm.SelectedLeftTab + 1);
+        else if (ExportHotkey(hotkeys, e) is { } export)
+        {
+            e.Handled = true;
+            // FModel exports what's selected in the focused list: here, the packages
+            if (_vm.IsReady && _vm.SelectedLeftTab == 2 && PackagesList.SelectedItems is { Count: > 0 } selected)
+                await export.ExecuteAsync(selected.Cast<object>().ToArray());
+            return;
+        }
+        else return;
+        e.Handled = true;
+    }
+
+    private CommunityToolkit.Mvvm.Input.IAsyncRelayCommand<System.Collections.IList?>? ExportHotkey(HotkeySettings hotkeys, KeyEventArgs e)
+    {
+        var vm = Vm;
+        if (hotkeys.ExportData.IsTriggered(e)) return vm.ExportRawDataCommand;
+        if (hotkeys.ExportProperties.IsTriggered(e)) return vm.ExportPropertiesCommand;
+        if (hotkeys.ExportTextures.IsTriggered(e)) return vm.ExportTextureCommand;
+        if (hotkeys.ExportModels.IsTriggered(e)) return vm.ExportModelCommand;
+        if (hotkeys.ExportWorlds.IsTriggered(e)) return vm.ExportWorldCommand;
+        if (hotkeys.ExportAnimations.IsTriggered(e)) return vm.ExportAnimationCommand;
+        if (hotkeys.ExportAudio.IsTriggered(e)) return vm.ExportAudioCommand;
+        if (hotkeys.ExportCode.IsTriggered(e)) return vm.ExportCodeCommand;
+        return null;
+    }
+
+    private void SwitchTab(int step)
+    {
+        var index = Vm.SelectedTab is { } tab ? Vm.Tabs.IndexOf(tab) : 0;
+        var next = Math.Clamp(index + step, 0, Vm.Tabs.Count - 1);
+        if (next != index) Vm.SelectedTab = Vm.Tabs[next];
+    }
+
+    // FModel shows each export's hotkey in the menu (InputGestureText)
+    private void ShowHotkeysInMenus()
+    {
+        if (_vm is null) return;
+        var hotkeys = _vm.Settings.Hotkeys;
+        static KeyGesture? Gesture(Hotkey hotkey) => hotkey.IsAssigned ? new KeyGesture(hotkey.Key, hotkey.Modifiers) : null;
+        ExportDataItem.InputGesture = Gesture(hotkeys.ExportData);
+        ExportPropertiesItem.InputGesture = Gesture(hotkeys.ExportProperties);
+        ExportTexturesItem.InputGesture = Gesture(hotkeys.ExportTextures);
+        ExportModelsItem.InputGesture = Gesture(hotkeys.ExportModels);
+        ExportWorldsItem.InputGesture = Gesture(hotkeys.ExportWorlds);
+        ExportAnimationsItem.InputGesture = Gesture(hotkeys.ExportAnimations);
+        ExportAudioItem.InputGesture = Gesture(hotkeys.ExportAudio);
+        ExportCodeItem.InputGesture = Gesture(hotkeys.ExportCode);
     }
 
     // ---------- Packages ----------

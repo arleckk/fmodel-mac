@@ -88,7 +88,44 @@ public sealed class AppSettings
     public ExportOptions CreateExportOptions(EMeshFormat? meshFormat = null, ENaniteMeshFormat? naniteFormat = null) =>
         ExportOptionValues.FromSettings(this).ToOptions(CurrentVersioning.PlatformValue, meshFormat, naniteFormat);
 
-    public bool PreviewMeshes { get; set; } = true;
+    // FModel's Settings › Preview: what extracting a package opens in the 3D viewer
+    public bool PreviewStaticMeshes { get; set; } = true;
+    public bool PreviewSkeletalMeshes { get; set; } = true;
+    public bool PreviewAnimations { get; set; } = true;
+    public bool PreviewWorlds { get; set; } = true;
+
+    /// <summary>FModel's "Handle Skeletons as Empty Meshes": skeletons open in the 3D viewer and Export › Model takes them.</summary>
+    public bool SaveSkeletonAsMesh { get; set; }
+
+    // The single "Preview meshes" switch of earlier versions
+    [JsonProperty]
+    private bool PreviewMeshes
+    {
+        set
+        {
+            if (!value) PreviewStaticMeshes = PreviewSkeletalMeshes = PreviewAnimations = PreviewWorlds = false;
+        }
+    }
+
+    /// <summary>FModel's "Keep Directory Structure": properties and audio are saved under their package path.</summary>
+    public bool KeepDirectoryStructure { get; set; } = true;
+
+    /// <summary>Where Export › Properties and Audio save a file of <paramref name="packagePath"/> (no extension).</summary>
+    public string ExportPath(string packagePath) =>
+        Path.Combine(ExportsDir, KeepDirectoryStructure ? packagePath : Path.GetFileName(packagePath));
+
+    /// <summary>FModel's "AES Reload at Launch": when the AES endpoint is asked again for keys.</summary>
+    [JsonConverter(typeof(StringEnumConverter))]
+    public AesReload AesReload { get; set; } = AesReload.OncePerDay;
+
+    /// <summary>Last day the AES endpoint was asked, per game directory (for <see cref="AesReload.OncePerDay"/>).</summary>
+    public Dictionary<string, DateTime> LastAesReload { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    [JsonConverter(typeof(StringEnumConverter))]
+    public JsonHighlightTheme JsonHighlightTheme { get; set; } = JsonHighlightTheme.Default;
+
+    public HotkeySettings Hotkeys { get; set; } = new();
+
     public int ImageMergerMargin { get; set; } = 5;
     // FModel's "Serialize Script Bytecode" / "Serialize Inlined Shader Maps": extra data in the properties JSON
     public bool ReadScriptData { get; set; }
@@ -145,6 +182,13 @@ public sealed class AppSettings
         var args = File.Exists(path) ? new[] { "-R", path } : [path];
         Process.Start(new ProcessStartInfo("open", args) { UseShellExecute = false });
     }
+}
+
+public enum AesReload
+{
+    [System.ComponentModel.Description("Always")] Always,
+    [System.ComponentModel.Description("Never")] Never,
+    [System.ComponentModel.Description("Once Per Day")] OncePerDay
 }
 
 /// <summary>
