@@ -457,6 +457,69 @@ if (args is ["--json", var jsonPaks, var jsonGame, var jsonAes, ..])
         return;
     }
 
+    // "--json ... --landscape <map>" describes the landscape of a map: components, layers, materials and their textures
+    if (args[4..] is ["--landscape", var landscapeMap])
+    {
+        var world = jsonProvider.LoadPackage(jsonProvider[landscapeMap]).GetExports().OfType<CUE4Parse.UE4.Objects.Engine.UWorld>().First();
+        var components = new List<CUE4Parse.UE4.Assets.Exports.Component.Landscape.ULandscapeComponent>();
+        void Collect(CUE4Parse.UE4.Objects.Engine.UWorld w, int depth)
+        {
+            using var dto = new CUE4Parse_Conversion.Dto.WorldDto(w);
+            void Visit(CUE4Parse_Conversion.Dto.SceneComponentDto? c)
+            {
+                if (c is null) return;
+                if (c is CUE4Parse_Conversion.Dto.LandscapeMeshComponentDto l) components.Add(l.Component);
+                foreach (var child in c.Children) Visit(child);
+                foreach (var a in c.AttachedActors) Visit(a.RootComponent);
+            }
+            foreach (var actor in dto.Actors) Visit(actor.RootComponent);
+            if (depth < 2)
+                foreach (var level in dto.StreamingLevels) Collect(level.World, depth + 1);
+        }
+        Collect(world, 0);
+        Console.WriteLine($"{components.Count} landscape component(s)");
+        var landscapeContext = new FModelMac.Rendering.ViewerLoadContext(512);
+        foreach (var component in components.Take(3))
+        {
+            try
+            {
+                var model = FModelMac.Rendering.ViewerModel.FromLandscape(component, landscapeContext);
+                Console.WriteLine($"  model {component.Name}: {model.VertexCount} verts, bounds {model.Min} – {model.Max}, " +
+                                  $"texture {model.Sections.FirstOrDefault()?.Texture?.Name}, color {model.Sections.FirstOrDefault()?.Color}");
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"  model {component.Name} failed: {e}");
+            }
+        }
+        foreach (var (key, color) in landscapeContext.LandscapeLayerColors) Console.WriteLine($"  layer {key} = {color}");
+        foreach (var component in components.Take(2))
+        {
+            var instances = component.GetOrDefault<CUE4Parse.UE4.Objects.UObject.FPackageIndex[]>("MaterialInstances", []);
+            var proxy = component.Outer?.Load<CUE4Parse.UE4.Assets.Exports.Actor.ALandscapeProxy>();
+            Console.WriteLine($"{component.GetPathName()}: size {component.ComponentSizeQuads} quads, override {component.OverrideMaterial?.Name}, " +
+                              $"instances [{string.Join(", ", instances.Select(i => i.Name))}], proxy material {proxy?.LandscapeMaterial?.Name}");
+            Console.WriteLine($"  layers: {string.Join(", ", component.WeightmapLayerAllocations.Select(a => $"{a.GetLayerName()}(tex {a.WeightmapTextureIndex} ch {a.WeightmapTextureChannel})"))}");
+            foreach (var ptr in instances.Take(1).Append(proxy?.LandscapeMaterial).OfType<CUE4Parse.UE4.Objects.UObject.FPackageIndex>())
+            {
+                if (!ptr.TryLoad<CUE4Parse.UE4.Assets.Exports.Material.UMaterialInterface>(out var material)) continue;
+                var p2 = new CUE4Parse.UE4.Assets.Exports.Material.CMaterialParams2();
+                material.GetParams(p2, CUE4Parse.UE4.Assets.Exports.Material.EMaterialDepth.TopLayerOnly);
+                Console.WriteLine($"  material {material.GetPathName()} ({material.ExportType})");
+                foreach (var (name, tex) in p2.Textures.Take(40)) Console.WriteLine($"    tex {name} = {tex}");
+                var parent = material;
+                for (var i = 0; i < 4 && parent is CUE4Parse.UE4.Assets.Exports.Material.UMaterialInstance mi && mi.Parent?.Load<CUE4Parse.UE4.Assets.Exports.Material.UMaterialInterface>() is { } next; i++)
+                {
+                    parent = next;
+                    Console.WriteLine($"    parent {next.GetPathName()} ({next.ExportType})");
+                }
+                if (parent is CUE4Parse.UE4.Assets.Exports.Material.UMaterial root)
+                    Console.WriteLine($"    referenced textures: {string.Join(", ", root.ReferencedTextures.Select(t => t?.Name).Take(40))}");
+            }
+        }
+        return;
+    }
+
     // "--json ... --list-files <regex>" lists matching files plus a count per extension
     if (args[4..] is ["--list-files", var pattern])
     {
@@ -805,6 +868,34 @@ async Task ViewerTestAsync(string outputDir, string[] packages)
             foreach (var o in map.Objects.OrderByDescending(o => o.Instances.Length).Take(5))
                 Console.WriteLine($"    {o.Model.Name} ({o.Model.Kind}) × {o.Instances.Length}");
             await Capture($"map-{map.Name}");
+
+            // Spline meshes, and the landscape close up (maps' bounds include far-away backdrops)
+            var splines = map.Objects.Where(o => o.Model.Kind == "Spline Mesh").ToArray();
+            (System.Numerics.Vector3 Min, System.Numerics.Vector3 Max) BoxOf(IEnumerable<SceneObject> objects)
+            {
+                var corners = objects.SelectMany(o => o.Instances.SelectMany(m => new[]
+                {
+                    System.Numerics.Vector3.Transform(o.Model.Min, m), System.Numerics.Vector3.Transform(o.Model.Max, m)
+                })).ToArray();
+                return (corners.Aggregate(System.Numerics.Vector3.Min), corners.Aggregate(System.Numerics.Vector3.Max));
+            }
+            if (splines.Length > 0)
+            {
+                Console.WriteLine($"    spline meshes: {splines.Length} ({string.Join(", ", splines.Select(o => o.Model.Name).Distinct().Take(6))})");
+                var longest = splines.OrderByDescending(o => (o.Model.Max - o.Model.Min).Length()).First();
+                var (smin, smax) = BoxOf([longest]);
+                Console.WriteLine($"    longest: {longest.Model.Name}, {(longest.Model.Max - longest.Model.Min) / 100} m bent");
+                viewer.ModelViewport.FrameBox(smin, smax, 0.5f);
+                await Capture($"map-{map.Name}-spline");
+            }
+            var terrain = map.Objects.Where(o => o.Model.Kind == "Landscape").ToArray();
+            if (terrain.Length > 0)
+            {
+                var (tmin, tmax) = BoxOf(terrain);
+                Console.WriteLine($"    landscape: {terrain.Length} component(s), {(tmax - tmin) / 100} m");
+                viewer.ModelViewport.FrameBox(tmin, tmax, 0.6f);
+                await Capture($"map-{map.Name}-landscape");
+            }
             continue;
         }
 

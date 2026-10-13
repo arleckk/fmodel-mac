@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CUE4Parse.UE4.Assets.Exports;
 using CUE4Parse.UE4.Assets.Exports.Animation;
 using CUE4Parse.UE4.Assets.Exports.Component.Landscape;
+using CUE4Parse.UE4.Assets.Exports.Component.SplineMesh;
 using CUE4Parse.UE4.Assets.Exports.Engine;
 using CUE4Parse.UE4.Assets.Exports.Material;
 using CUE4Parse.UE4.Assets.Exports.StaticMesh;
@@ -28,6 +29,13 @@ public sealed class ViewerLoadContext(int maxTextureSize = 2048)
     public int MaxTextureSize { get; } = maxTextureSize;
     internal readonly ConcurrentDictionary<string, Lazy<(ViewerTexture? Texture, Vector3 Color)>> Materials = new(StringComparer.OrdinalIgnoreCase);
     internal readonly ConcurrentDictionary<string, Lazy<ViewerTexture?>> Textures = new(StringComparer.OrdinalIgnoreCase);
+    // Landscapes: layer colors, the diffuse textures of a landscape material, and textures' average colors
+    internal readonly ConcurrentDictionary<string, Lazy<Vector3>> LayerColors = new(StringComparer.OrdinalIgnoreCase);
+    internal readonly ConcurrentDictionary<string, Lazy<IReadOnlyList<LandscapeShading.Candidate>>> LandscapeTextures = new(StringComparer.OrdinalIgnoreCase);
+    internal readonly ConcurrentDictionary<string, Lazy<Vector3?>> TextureColors = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The landscape layer colors resolved so far, by "material|layer" (diagnostics).</summary>
+    public IEnumerable<(string Key, Vector3 Color)> LandscapeLayerColors => LayerColors.Select(p => (p.Key, p.Value.Value));
 }
 
 /// <summary>Decoded RGBA8 pixels, top row first, ready for glTexImage2D.</summary>
@@ -111,9 +119,46 @@ public sealed class ViewerModel
         };
     }
 
-    /// <summary>One landscape (terrain) component, in the component's local space.</summary>
-    public static ViewerModel FromLandscape(ULandscapeComponent component, ViewerLoadContext context, CancellationToken ct = default) =>
-        Build(new LandscapeMeshDto(component), "Landscape", context, null, ct, new Vector3(0.42f, 0.47f, 0.36f));
+    /// <summary>
+    /// One landscape (terrain) component, in the landscape's space (the vertices already include the component's
+    /// offset), colored by its paint layers (<see cref="LandscapeShading"/>).
+    /// </summary>
+    public static ViewerModel FromLandscape(ULandscapeComponent component, ViewerLoadContext context, CancellationToken ct = default)
+    {
+        using var dto = new LandscapeMeshDto(component);
+        var model = Build(dto, "Landscape", context, null, ct, new Vector3(0.42f, 0.47f, 0.36f));
+        try
+        {
+            if (LandscapeShading.Bake(component, dto.LODs[0], context) is not var (texture, average, uvs)) return model;
+            for (var i = 0; i < uvs.Length; i++)
+            {
+                model.Vertices[i * FloatsPerVertex + 6] = uvs[i].U;
+                model.Vertices[i * FloatsPerVertex + 7] = uvs[i].V;
+            }
+            var sections = model.Sections.Select(s => new ViewerSection
+            {
+                FirstIndex = s.FirstIndex, IndexCount = s.IndexCount, MaterialName = s.MaterialName, Texture = texture, Color = average
+            }).ToArray();
+            return new ViewerModel
+            {
+                Name = model.Name, Kind = model.Kind, Vertices = model.Vertices, Indices = model.Indices, Sections = sections,
+                LodCount = model.LodCount, Min = model.Min, Max = model.Max
+            };
+        }
+        catch (Exception e)
+        {
+            Serilog.Log.Warning(e, "Could not color the landscape component {Component}", component.GetPathName());
+            return model;
+        }
+    }
+
+    /// <summary>A spline mesh component: its static mesh bent along the component's spline, in the component's space.</summary>
+    public static ViewerModel FromSpline(USplineMeshComponent component, ViewerLoadContext context, FPackageIndex?[]? overrideMaterials,
+        CancellationToken ct = default)
+    {
+        using var dto = new StaticMeshDto(component, EMeshQuality.Highest);
+        return Build(dto, "Spline Mesh", context, overrideMaterials, ct);
+    }
 
     // UE5 desktop cooks strip the morph deltas from UMorphTarget and keep them only in the mesh's GPU
     // buffers; CUE4Parse decodes them back on demand, as its exporter does

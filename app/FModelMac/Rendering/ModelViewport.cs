@@ -216,6 +216,13 @@ public sealed class ModelViewport : OpenGlControlBase
     /// <summary>Centers the camera on everything visible.</summary>
     public void FrameAll() => FrameBounds(Scene.Bounds());
 
+    /// <summary>Centers the camera on a box of the scene, from above at an angle.</summary>
+    public void FrameBox(Vector3 min, Vector3 max, float pitch = 0.3f)
+    {
+        FrameBounds((min, max));
+        _pitch = pitch;
+    }
+
     private void FrameBounds((Vector3 Min, Vector3 Max)? bounds)
     {
         if (bounds is not var (min, max)) return;

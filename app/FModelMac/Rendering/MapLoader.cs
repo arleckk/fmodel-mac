@@ -96,12 +96,21 @@ public static class MapLoader
                 case InstancedStaticMeshComponentDto ism when visible:
                     foreach (var t in ism.Transforms) PlaceMesh(ism, ViewerMath.ToViewer(t) * world, layer);
                     break;
+                case SplineMeshComponentDto spline when visible && spline.MeshPtr is { IsNull: false }:
+                    // Each one is bent along its own spline: one model per component, not per mesh
+                    var bent = spline.Component;
+                    var overrides = spline.OverrideMaterials;
+                    Place(layer, $"spline:{bent.GetPathName()}", ctx => ViewerModel.FromSpline(bent, ctx, overrides, ct), world);
+                    break;
                 case StaticMeshComponentDto or SkeletalMeshComponentDto when visible:
                     PlaceMesh((MeshComponentDto) component, world, layer);
                     break;
                 case LandscapeMeshComponentDto landscape when visible:
+                    // Its vertices already include the component's offset in the landscape (as CUE4Parse's exporters assume)
                     var piece = landscape.Component;
-                    Place(layer, $"landscape:{piece.GetPathName()}", ctx => ViewerModel.FromLandscape(piece, ctx, ct), world);
+                    var local = component.Transform;
+                    var placement = ViewerMath.ToViewer(new FTransform(local.Rotation, FVector.ZeroVector, local.Scale3D)) * parent;
+                    Place(layer, $"landscape:{piece.GetPathName()}", ctx => ViewerModel.FromLandscape(piece, ctx, ct), placement);
                     break;
             }
 

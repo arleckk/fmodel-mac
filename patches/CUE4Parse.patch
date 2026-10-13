@@ -44,7 +44,7 @@ index ba2ca5d5d4af4b5995b8958bcf1180449bad6fcc..98ad8040509867d8317f2f849070f085
          {
              RootComponent.AttachedActors.Add(new RuntimeHashActorDto(runtimeHash));
 diff --git a/CUE4Parse-Conversion/Dto/ComponentDto.cs b/CUE4Parse-Conversion/Dto/ComponentDto.cs
-index be9018fba3d920dbb90082bf432f0ef6d639a382..f97365e747aa40ce8f58b304615a597e2d2eab55 100644
+index be9018fba3d920dbb90082bf432f0ef6d639a382..68ad87d5606d28bf3ca505159a42e3f9b0f9b34e 100644
 --- a/CUE4Parse-Conversion/Dto/ComponentDto.cs
 +++ b/CUE4Parse-Conversion/Dto/ComponentDto.cs
 @@ -184,6 +184,7 @@ public class LandscapeMeshComponentDto : PrimitiveComponentDto
@@ -55,6 +55,61 @@ index be9018fba3d920dbb90082bf432f0ef6d639a382..f97365e747aa40ce8f58b304615a597e
  
      public LandscapeMeshComponentDto(ULandscapeComponent component, ActorDto owner) : base(component, owner)
      {
+@@ -233,6 +234,7 @@ public InstancedStaticMeshComponentDto(FPackageIndex meshPtr, FTransform[] trans
+ public class SplineMeshComponentDto(FPackageIndex meshPtr, USplineMeshComponent component, ActorDto owner) : StaticMeshComponentDto(meshPtr, component, owner)
+ {
+     internal readonly USplineMeshComponent _component = component;
++    public USplineMeshComponent Component => _component; // lets viewers bend the mesh along the spline
+ }
+ 
+ public class GeometryCollectionComponentDto : MeshComponentDto
+diff --git a/CUE4Parse-Conversion/Dto/MeshLodDto.StaticMesh.cs b/CUE4Parse-Conversion/Dto/MeshLodDto.StaticMesh.cs
+index 98a549b38d5eb70e076499ad631b4e79c3530531..45460b42f2d2580cea843d00134db9a4c7c1c7d9 100644
+--- a/CUE4Parse-Conversion/Dto/MeshLodDto.StaticMesh.cs
++++ b/CUE4Parse-Conversion/Dto/MeshLodDto.StaticMesh.cs
+@@ -31,16 +31,22 @@ internal static MeshLodDto<MeshVertex> FromStaticMesh(StaticMeshDto owner, uint
+         for (var i = 0; i < vertices.Length; i++)
+         {
+             var pos = lod.PositionVertexBuffer.Verts[i];
+-            if (spline != null) // TODO normals
++            var uv = lod.VertexBuffer.UV[i];
++            FVector4 normal = uv.Normal[2], tangent = uv.Normal[0];
++            if (spline != null)
+             {
+                 var distanceAlong = USplineMeshComponent.GetAxisValueRef(ref pos, spline.ForwardAxis);
+                 var sliceTransform = spline.CalcSliceTransform(distanceAlong);
+                 USplineMeshComponent.SetAxisValueRef(ref pos, spline.ForwardAxis, 0f);
+                 pos = sliceTransform.TransformPosition(pos);
++
++                // Bend the tangent frame with the slice too, as the spline mesh vertex factory does: normals take the
++                // inverse scale, tangents the scale (W keeps the binormal sign)
++                normal = BendDirection(normal, sliceTransform, inverseScale: true);
++                tangent = BendDirection(tangent, sliceTransform, inverseScale: false);
+             }
+ 
+-            var uv = lod.VertexBuffer.UV[i];
+-            vertices[i] = new MeshVertex(pos, uv.Normal[2], uv.Normal[0], uv.UV[0]);
++            vertices[i] = new MeshVertex(pos, normal, tangent, uv.UV[0]);
+ 
+             for (var j = 0; j < extraUvs.Length; j++)
+             {
+@@ -57,4 +63,16 @@ internal static MeshLodDto<MeshVertex> FromStaticMesh(StaticMeshDto owner, uint
+ 
+         return new MeshLodDto<MeshVertex>(owner, sourceLodIndex, lod.IndexBuffer.Buffer, vertices, sections, extraUvs, vertexColors, screenSize, lod.CardRepresentationData?.bMostlyTwoSided ?? false);
+     }
++
++    private static FVector4 BendDirection(FVector4 direction, FTransform slice, bool inverseScale)
++    {
++        var scale = slice.Scale3D;
++        var v = new FVector(direction.X, direction.Y, direction.Z);
++        v = inverseScale
++            ? v * new FVector(scale.X != 0 ? 1 / scale.X : 0, scale.Y != 0 ? 1 / scale.Y : 0, scale.Z != 0 ? 1 / scale.Z : 0)
++            : v * scale;
++        v = slice.Rotation.RotateVector(v);
++        v.Normalize();
++        return v.ContainsNaN() ? direction : new FVector4(v.X, v.Y, v.Z, direction.W);
++    }
+ }
 diff --git a/CUE4Parse-Conversion/Dto/WorldDto.cs b/CUE4Parse-Conversion/Dto/WorldDto.cs
 index 271331f00f2afdac05be8fb07a6370161feafa39..17261ac493d45278626d28222a2f64304aa527be 100644
 --- a/CUE4Parse-Conversion/Dto/WorldDto.cs

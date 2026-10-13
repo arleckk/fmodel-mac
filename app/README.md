@@ -90,8 +90,13 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
   mueve, F encuadra la selección. Cada malla que abres se **agrega a la escena** junto a las
   demás; el outliner (SCENE) permite ocultar, quitar o seleccionar cada una, y Clear Scene vacía.
   Doble clic en un **mapa** (.umap) carga el nivel completo: actores y componentes adjuntos,
-  instancias (ISM/HISM/foliage), landscapes, niveles de streaming (con su transformación), level
-  instances y materiales sobrescritos, con instancing en GPU (una llamada de dibujo por malla).
+  instancias (ISM/HISM/foliage), niveles de streaming (con su transformación), level instances y
+  materiales sobrescritos, con instancing en GPU (una llamada de dibujo por malla). Las **spline
+  meshes** (carreteras, vías, cables) se doblan a lo largo de su spline, con normales incluidas. Los
+  **landscapes** se arman como un terreno continuo y se colorean por sus capas de pintura: cada capa
+  toma el color promedio de la textura difusa del material cuyo nombre coincide (Grass_LayerInfo →
+  T_Ground_Grass_D), con una paleta por nombre si no hay ninguna, y los pesos de cada vértice las
+  mezclan (el visor de FModel no muestra landscapes).
   Los mapas de **World Partition** (UE5) cargan todas sus celdas de runtime en paralelo, tanto del
   hash set de UE 5.3+ como de los grids espaciales de 5.0–5.2: el contenido principal queda en el
   mapa, cada data layer de runtime es un elemento aparte (visible si empieza activado en el juego)
