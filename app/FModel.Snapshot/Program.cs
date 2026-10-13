@@ -517,6 +517,21 @@ if (args is ["--unluac", .. var chunkFiles])
 }
 
 // "--json <paks dir> <EGame> <aes|-> <package>..." prints the exports as FModel's JSON (for inspecting assets)
+// "--heightmap-test <dir>": a 16-bit grayscale PNG written and read back the way CUE4Parse exports landscape heightmaps
+if (args is ["--heightmap-test", var heightmapDir])
+{
+    using var heightmap = new SixLabors.ImageSharp.Image<SixLabors.ImageSharp.PixelFormats.L16>(64, 32);
+    for (var y = 0; y < 32; y++)
+    for (var x = 0; x < 64; x++)
+        heightmap[x, y] = new SixLabors.ImageSharp.PixelFormats.L16((ushort) (x * 1000 + y * 7));
+    var heightmapPath = Path.Combine(heightmapDir, "heightmap.png");
+    using (var stream = File.Create(heightmapPath)) heightmap.Save(stream, CUE4Parse_Conversion.Exporters.LandscapeMeshExporter.HeightmapEncoder);
+    using var back = SixLabors.ImageSharp.Image.Load<SixLabors.ImageSharp.PixelFormats.L16>(heightmapPath);
+    var same = back.Width == 64 && back.Height == 32 && back[63, 31].PackedValue == 63 * 1000 + 31 * 7 && back[5, 2].PackedValue == 5014;
+    Console.WriteLine($"heightmap: {new FileInfo(heightmapPath).Length} bytes, {back.Width}x{back.Height}, values preserved {same}");
+    return;
+}
+
 // "--migrate-test <dir>": the FModelMac → FModel folder move, in a scratch folder (old data kept, new one wins)
 if (args is ["--migrate-test", var migrateRoot])
 {

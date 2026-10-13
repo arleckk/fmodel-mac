@@ -34,6 +34,8 @@
     <PackageReference Include="Serilog" Version="4.3.1" />
     <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
     <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
+    <!-- Not used directly: replaces the vulnerable 9.0.0 that CUE4Parse's Fmod5Sharp → IndexRange pulls in (GHSA-73j8-2gch-69rq) -->
+    <PackageReference Include="Microsoft.Bcl.Memory" Version="10.0.12" />
   </ItemGroup>
 
   <ItemGroup>

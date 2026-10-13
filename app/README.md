@@ -315,6 +315,16 @@ USD. Settings and logs from the old `FModelMac` folders (`~/Library/Application 
 - **Avalonia 11.3, not 12:** Avalonia 12 uses SkiaSharp 3.x and CUE4Parse-Conversion pins
   SkiaSharp `[2.88.9]`. FModel has the same lock.
 - **ComboBox for the version:** `AutoCompleteBox` rewrote the value while filtering.
+- **Dependency advisories:** CUE4Parse pulls `Microsoft.Bcl.Memory 9.0.0` (GHSA-73j8-2gch-69rq) through
+  Fmod5Sharp → IndexRange; the patch pins `10.0.12` with central transitive pinning, and `FModel.csproj`
+  pins it too (it isn't centrally managed). `SixLabors.ImageSharp` stays at CUE4Parse's `[3.1.12]`: its
+  five advisories are fixed only in 4.1.2+, and ImageSharp 4 refuses to build in Release without a Six
+  Labors license key, which every person building this repository would need. They're in code the app
+  never runs (TIFF CCITT encoding, HistogramEqualization, ICC and BigTIFF decoding): CUE4Parse only
+  creates a 16-bit landscape heightmap and encodes it as PNG. `app/Directory.Build.props` and the patch
+  list them as reviewed (`NuGetAuditSuppress`). The heightmap encoder now asks for 16-bit grayscale
+  explicitly (`LandscapeMeshExporter.HeightmapEncoder`), since ImageSharp 4's default would write 8-bit
+  RGBA, should it be upgraded later.
 - **FModel resources:** the PNGs in `Assets/Icons`, the `.xshd` files in `Assets/Highlighting` and
   `Themes/Icons.axaml` (generated from `Icons.xaml`) come from FModel, which is GPL-3.0; if
   this app is distributed, it must be GPL-3.0 too.
@@ -372,6 +382,10 @@ dotnet run -- --json <Paks folder> GAME_UE4_25 <AES|-> Game/Content/.../Package.
 dotnet run -- --json <Paks folder> GAME_UE4_25 <AES|-> --animations Game/Content/.../Mesh.uasset
 # A material's parameters (textures with mean ± deviation per channel, colors, scalars)
 dotnet run -- --json <Paks folder> GAME_UE4_25 <AES|-> --material Game/Content/.../MI_Something.uasset
+# A landscape heightmap written and read back with CUE4Parse's encoder (16-bit grayscale, values kept)
+dotnet run -- --heightmap-test ./out
+# The FModelMac → FModel data folder move, in a scratch folder
+dotnet run -- --migrate-test ./out
 # Find References (with the index time) and the size of Show Metadata
 dotnet run -- --json <Paks folder> GAME_UE4_25 <AES|-> --refs Game/Content/.../Package.uasset
 # Creates a backup, reads it and compares it with the game (timings); --online-backup <dir> also lists
