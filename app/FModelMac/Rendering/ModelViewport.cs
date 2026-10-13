@@ -886,10 +886,11 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
     }
 
     // ---------- Input ----------
-    // Snooper's controls: left-drag orbits (Orbit) or looks around (Fly); WASD move and Q/E go down/up while held
-    // (Shift faster, Option slower); C/X zoom the lens; F frames. Right/middle/Shift-drag pans; the wheel or a pinch
-    // zooms (Fly: moves forward, and with a button held changes the speed, as do +/-). The window forwards its keys
-    // (HandleKeyDown/HandleKeyUp), so they work without clicking the view first.
+    // Snooper's controls: left-drag orbits (Orbit) or looks around (Fly), as do the arrow keys; WASD move and Q/E go
+    // down/up while held (Shift faster, Option slower), each axis scaled by SpeedX/Y/Z; C/X zoom the lens; F frames.
+    // Right/middle/Shift-drag pans; the wheel or a pinch zooms (Fly: moves forward, and with a button held changes
+    // the speed, as do +/-). The window forwards its keys (HandleKeyDown/HandleKeyUp), so they work without clicking
+    // the view first.
 
     // Without this the GL surface isn't hit-testable (nothing is drawn through the control's own render), so clicks,
     // drags and the wheel went to whatever was behind it
@@ -903,6 +904,17 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
 
     /// <summary>Raised when the camera mode, speed or lens changes (the window's hint line).</summary>
     public event EventHandler? NavigationChanged;
+
+    // An arrow key held for a second turns as much as a 120-pixel drag (about 70°/s orbiting, 35°/s flying)
+    private const float ArrowPixelsPerSecond = 120;
+
+    /// <summary>Multipliers of the movement along each axis: X sideways (A/D), Y ahead (W/S), Z up (Q/E).</summary>
+    public float SpeedX { get; set; } = 1;
+    public float SpeedY { get; set; } = 1;
+    public float SpeedZ { get; set; } = 1;
+
+    /// <summary>Multiplier of how fast drags and the arrow keys turn the camera.</summary>
+    public float RotationSpeed { get; set; } = 1;
 
     /// <summary>Fly mode's speed in m/s.</summary>
     public float FlySpeed => _flySpeed / 100;
@@ -963,7 +975,7 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
     {
         var fly = CameraMode == CameraMode.Fly;
         var eye = _target + _distance * Forward;
-        var sensitivity = fly ? 0.005f : 0.01f;
+        var sensitivity = (fly ? 0.005f : 0.01f) * RotationSpeed;
         _yaw -= dx * sensitivity;
         _pitch = Math.Clamp(_pitch + dy * sensitivity, -1.55f, 1.55f);
         if (fly) _target = eye - _distance * Forward;
@@ -1020,7 +1032,8 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
         }
         switch (key)
         {
-            case Key.W or Key.A or Key.S or Key.D or Key.Q or Key.E or Key.C or Key.X:
+            case Key.W or Key.A or Key.S or Key.D or Key.Q or Key.E or Key.C or Key.X
+                or Key.Left or Key.Right or Key.Up or Key.Down:
                 _held.Add(key);
                 StartStepping();
                 return true;
@@ -1089,13 +1102,18 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
         var (right, _) = CameraAxes();
         var ahead = fly ? -Forward : Vector3.Normalize(new Vector3(-Forward.X, 0, -Forward.Z));
         var move = Vector3.Zero;
-        if (_held.Contains(Key.W)) move += ahead;
-        if (_held.Contains(Key.S)) move -= ahead;
-        if (_held.Contains(Key.D)) move += right;
-        if (_held.Contains(Key.A)) move -= right;
-        if (_held.Contains(Key.E)) move += Vector3.UnitY;
-        if (_held.Contains(Key.Q)) move -= Vector3.UnitY;
+        if (_held.Contains(Key.W)) move += ahead * SpeedY;
+        if (_held.Contains(Key.S)) move -= ahead * SpeedY;
+        if (_held.Contains(Key.D)) move += right * SpeedX;
+        if (_held.Contains(Key.A)) move -= right * SpeedX;
+        if (_held.Contains(Key.E)) move += Vector3.UnitY * SpeedZ;
+        if (_held.Contains(Key.Q)) move -= Vector3.UnitY * SpeedZ;
         _target += move * step;
+
+        // Arrows turn the camera like a drag in their direction (Rotate applies the rotation speed)
+        var turnX = (_held.Contains(Key.Right) ? 1 : 0) - (_held.Contains(Key.Left) ? 1 : 0);
+        var turnY = (_held.Contains(Key.Down) ? 1 : 0) - (_held.Contains(Key.Up) ? 1 : 0);
+        if (turnX != 0 || turnY != 0) Rotate(turnX * ArrowPixelsPerSecond * boost * dt, turnY * ArrowPixelsPerSecond * boost * dt);
 
         var lens = (_held.Contains(Key.X) ? 1 : 0) - (_held.Contains(Key.C) ? 1 : 0);
         if (lens != 0)

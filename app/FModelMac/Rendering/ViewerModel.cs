@@ -522,14 +522,16 @@ public sealed class ViewerModel
                 layout = MaskLayout.FromNames(maskName, mask.Name);
             }
 
-            // Diffuse: the known names, then any color (sRGB) texture that isn't the normal map or the masks
-            // ("BaseTexture", "MainTex"…), preferring names that say so; the legacy parameters last
+            // Diffuse: the known names; then the material's own color (sRGB) textures whose parameter or texture name
+            // says so ("BaseTexture", "MainTex", "X_BaseColor"…); only then CUE4Parse's PM_Diffuse guess, which can be
+            // the parent material's default (DSR's MI_Flamedramon: BaseTexture is unknown to CUE4Parse, so PM_Diffuse
+            // became M_DigimonMaster_FX's Apocalymon texture); then any other color texture, the legacy parameters last
+            var own = all.Where(p => !p.Name.StartsWith("PM_", StringComparison.OrdinalIgnoreCase) && p.Texture.SRGB &&
+                                     p.Texture != normal && p.Texture != mask && !NormalName.IsMatch(p.Texture.Name)).ToList();
             var texture = parameters.GetTextures(CMaterialParams2.Diffuse[0]).FirstOrDefault()
+                          ?? own.FirstOrDefault(p => LikelyDiffuse.IsMatch(p.Name) || DiffuseName.IsMatch(p.Name) || DiffuseName.IsMatch(p.Texture.Name)).Texture
                           ?? Fallback(parameters, CMaterialParams2.FallbackDiffuse)
-                          ?? parameters.GetTexturesByRegex(DiffuseName).FirstOrDefault()
-                          ?? all.Where(p => p.Texture.SRGB && p.Texture != normal && p.Texture != mask)
-                              .OrderByDescending(p => LikelyDiffuse.IsMatch(p.Name))
-                              .Select(p => p.Texture).FirstOrDefault()
+                          ?? own.Select(p => p.Texture).FirstOrDefault()
                           ?? LegacyDiffuse(material);
 
             var color = parameters.Colors.TryGetValue(CMaterialParams2.DiffuseColors[0].FirstOrDefault(parameters.Colors.ContainsKey) ?? "", out var c)

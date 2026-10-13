@@ -932,6 +932,15 @@ async Task ViewerTestAsync(string outputDir, string[] packages)
             continue;
         }
 
+        // "close" presses Esc in the viewer, which should close it
+        if (package == "close")
+        {
+            viewer.RaiseEvent(new Avalonia.Input.KeyEventArgs { RoutedEvent = Avalonia.Input.InputElement.KeyDownEvent, Key = Avalonia.Input.Key.Escape, Source = viewer });
+            await Task.Delay(200);
+            Console.WriteLine($"Esc: viewer {(viewer.IsVisible ? "still open" : "closed")}");
+            continue;
+        }
+
         // "hittest" prints which control gets a click in the middle of the 3D view
         if (package == "hittest")
         {
@@ -965,6 +974,15 @@ async Task ViewerTestAsync(string outputDir, string[] packages)
             Console.WriteLine($"key {package[4..]}: eye moved {after.Eye - before.Eye} ({(after.Eye - before.Eye).Length():0.#}), " +
                               $"target moved {(after.Target - before.Target).Length():0.#}, lens {viewer.ModelViewport.FieldOfViewDegrees:0.#}°");
             await Capture($"key-{spec[0]}");
+            continue;
+        }
+        // "slider:<name>=<multiplier>" sets a camera speed slider (SpeedX, SpeedY, SpeedZ, Rotation)
+        if (package.StartsWith("slider:"))
+        {
+            var (sliderName, multiplier) = (package[7..].Split('=')[0], double.Parse(package.Split('=')[1], System.Globalization.CultureInfo.InvariantCulture));
+            viewer.FindControl<Slider>($"{sliderName}Slider")!.Value = Math.Log10(multiplier);
+            var vp = viewer.ModelViewport;
+            Console.WriteLine($"speeds X {vp.SpeedX} Y {vp.SpeedY} Z {vp.SpeedZ} rotation {vp.RotationSpeed}");
             continue;
         }
         if (package.StartsWith("drag:"))
@@ -1145,6 +1163,8 @@ async Task ViewerTestAsync(string outputDir, string[] packages)
                           $"{(model.VertexCount == 0 ? $", bones shown: {viewer.ModelViewport.ShowBones}" : "")}");
         foreach (var section in model.Sections) Console.WriteLine($"    {section.MaterialName}: {section.Details}");
         Console.WriteLine($"    tangent frame: {TangentFrameCheck(model)}");
+        foreach (var section in model.Sections.DistinctBy(x => x.MaterialName).Take(6))
+            Console.WriteLine($"    material {section.MaterialName}: {section.Details}");
         foreach (var morph in model.Morphs)
             Console.WriteLine($"    morph {morph.Name}: {morph.Details} " + string.Join(" ", morph.VertexIndices.Select((v, i) =>
                 $"v{v}=({morph.Deltas[i * 6]:0.##},{morph.Deltas[i * 6 + 1]:0.##},{morph.Deltas[i * 6 + 2]:0.##})")));

@@ -43,7 +43,16 @@ public partial class ModelViewerWindow : Window
         // Camera keys work wherever the focus is in the window (not only after clicking the view)
         AddHandler(KeyDownEvent, (_, e) =>
         {
+            // Esc closes the viewer (an open combo box's list takes it first)
+            if (e.Key == Key.Escape && e.KeyModifiers == KeyModifiers.None)
+            {
+                e.Handled = true;
+                Close();
+                return;
+            }
             if (e.Source is TextBox) return;
+            // Arrows rotate the camera, except in the controls that use them (lists, sliders, combo boxes)
+            if (e.Key is Key.Left or Key.Right or Key.Up or Key.Down && e.Source is Slider or ListBox or ListBoxItem or ComboBox or ComboBoxItem) return;
             if (Viewport.HandleKeyDown(e.Key, e.KeyModifiers)) e.Handled = true;
         }, RoutingStrategies.Tunnel);
         AddHandler(KeyUpEvent, (_, e) => Viewport.HandleKeyUp(e.Key, e.KeyModifiers), RoutingStrategies.Tunnel, handledEventsToo: true);
@@ -59,6 +68,13 @@ public partial class ModelViewerWindow : Window
             }
         };
         UpdateHint();
+        foreach (var slider in new[] { SpeedXSlider, SpeedYSlider, SpeedZSlider, RotationSlider })
+            slider.PropertyChanged += (_, e) =>
+            {
+                if (e.Property == Slider.ValueProperty) ApplyCameraSpeeds();
+            };
+        ApplyCameraSpeeds();
+        Closed += (_, _) => SaveCameraSpeeds();
         RootMotionToggle.IsCheckedChanged += (_, _) =>
         {
             if (_pose is null) return;
@@ -74,14 +90,52 @@ public partial class ModelViewerWindow : Window
         set
         {
             _settings = value;
-            if (value is not null) CameraModeBox.SelectedIndex = value.CameraMode == CameraMode.Fly ? 1 : 0;
+            if (value is null) return;
+            CameraModeBox.SelectedIndex = value.CameraMode == CameraMode.Fly ? 1 : 0;
+            SpeedXSlider.Value = MathF.Log10(value.CameraSpeedX);
+            SpeedYSlider.Value = MathF.Log10(value.CameraSpeedY);
+            SpeedZSlider.Value = MathF.Log10(value.CameraSpeedZ);
+            RotationSlider.Value = MathF.Log10(value.CameraRotationSpeed);
         }
     }
     private AppSettings? _settings;
 
+    // The sliders run from 0.1× to 10× on a log scale, 1× in the middle
+    private static float Multiplier(Slider slider) => MathF.Round(MathF.Pow(10, (float) slider.Value), 2);
+
+    private void ApplyCameraSpeeds()
+    {
+        Viewport.SpeedX = Multiplier(SpeedXSlider);
+        Viewport.SpeedY = Multiplier(SpeedYSlider);
+        Viewport.SpeedZ = Multiplier(SpeedZSlider);
+        Viewport.RotationSpeed = Multiplier(RotationSlider);
+        SpeedXText.Text = $"{Viewport.SpeedX:0.0#}×";
+        SpeedYText.Text = $"{Viewport.SpeedY:0.0#}×";
+        SpeedZText.Text = $"{Viewport.SpeedZ:0.0#}×";
+        RotationText.Text = $"{Viewport.RotationSpeed:0.0#}×";
+    }
+
+    private void SaveCameraSpeeds()
+    {
+        if (Settings is not { } settings) return;
+        if (settings.CameraSpeedX == Viewport.SpeedX && settings.CameraSpeedY == Viewport.SpeedY &&
+            settings.CameraSpeedZ == Viewport.SpeedZ && settings.CameraRotationSpeed == Viewport.RotationSpeed) return;
+        settings.CameraSpeedX = Viewport.SpeedX;
+        settings.CameraSpeedY = Viewport.SpeedY;
+        settings.CameraSpeedZ = Viewport.SpeedZ;
+        settings.CameraRotationSpeed = Viewport.RotationSpeed;
+        settings.Save();
+    }
+
+    private void OnResetCameraSpeedsClick(object? sender, RoutedEventArgs e)
+    {
+        foreach (var slider in new[] { SpeedXSlider, SpeedYSlider, SpeedZSlider, RotationSlider }) slider.Value = 0;
+        SaveCameraSpeeds();
+    }
+
     private void UpdateHint() => HintText.Text = Viewport.CameraMode == CameraMode.Fly
-        ? $"Fly · Drag: look · WASD: move · Q/E: down/up · Shift: faster · ⌥: slower · Scroll: forward · +/- or scroll while dragging: speed ({Viewport.FlySpeed:0.#} m/s) · Right-drag: pan · C/X: lens ({Viewport.FieldOfViewDegrees:0}°) · F: frame"
-        : $"Orbit · Drag: orbit · Right-drag or Shift-drag: pan · Scroll or pinch: zoom · WASD: move · Q/E: down/up · Shift: faster · ⌥: slower · C/X: lens ({Viewport.FieldOfViewDegrees:0}°) · F: frame";
+        ? $"Fly · Drag or arrows: look · WASD: move · Q/E: down/up · Shift: faster · ⌥: slower · Scroll: forward · +/- or scroll while dragging: speed ({Viewport.FlySpeed:0.#} m/s) · Right-drag: pan · C/X: lens ({Viewport.FieldOfViewDegrees:0}°) · F: frame · Esc: close"
+        : $"Orbit · Drag or arrows: orbit · Right-drag or Shift-drag: pan · Scroll or pinch: zoom · WASD: move · Q/E: down/up · Shift: faster · ⌥: slower · C/X: lens ({Viewport.FieldOfViewDegrees:0}°) · F: frame · Esc: close";
 
     public ModelViewport ModelViewport => Viewport;
     public ViewerScene Scene => Viewport.Scene;

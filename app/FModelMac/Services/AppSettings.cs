@@ -108,6 +108,14 @@ public sealed class AppSettings
     [JsonConverter(typeof(StringEnumConverter))]
     public Rendering.CameraMode CameraMode { get; set; } = Rendering.CameraMode.Orbit;
 
+    /// <summary>3D viewer movement speed multipliers per axis (X: A/D, Y: W/S, Z: Q/E) and of turning, 0.1–10.</summary>
+    public float CameraSpeedX { get => _cameraSpeedX; set => _cameraSpeedX = ClampSpeed(value); }
+    public float CameraSpeedY { get => _cameraSpeedY; set => _cameraSpeedY = ClampSpeed(value); }
+    public float CameraSpeedZ { get => _cameraSpeedZ; set => _cameraSpeedZ = ClampSpeed(value); }
+    public float CameraRotationSpeed { get => _cameraRotationSpeed; set => _cameraRotationSpeed = ClampSpeed(value); }
+    private float _cameraSpeedX = 1, _cameraSpeedY = 1, _cameraSpeedZ = 1, _cameraRotationSpeed = 1;
+    private static float ClampSpeed(float value) => float.IsFinite(value) ? Math.Clamp(value, 0.1f, 10) : 1;
+
     // FModel's new asset explorer: a grid (or list) of the selected folder in place of the asset tabs
     /// <summary>FModel's "Preview New Explorer System" switch.</summary>
     public bool NewAssetExplorer { get; set; } = true;

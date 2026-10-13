@@ -100,6 +100,25 @@
                     <c:SectionSeparator x:Name="MaterialsHeader" Text="MATERIALS" />
                 </StackPanel>
                 <TextBlock DockPanel.Dock="Bottom" x:Name="RendererText" Classes="dim" FontSize="10" TextWrapping="Wrap" Margin="0,8,0,0" />
+                <!-- Camera speeds: movement along each axis and turning, as multipliers (log scale, 0.1× to 10×) -->
+                <StackPanel DockPanel.Dock="Bottom">
+                    <c:SectionSeparator Text="CAMERA" Margin="0,8,0,4" />
+                    <Grid ColumnDefinitions="Auto,8,*,6,Auto" RowDefinitions="Auto,Auto,Auto,Auto">
+                        <TextBlock Text="X · A/D" VerticalAlignment="Center" ToolTip.Tip="Sideways movement speed (A/D)" />
+                        <Slider x:Name="SpeedXSlider" Grid.Column="2" Minimum="-1" Maximum="1" Value="0" Margin="0,-6" />
+                        <TextBlock x:Name="SpeedXText" Grid.Column="4" VerticalAlignment="Center" FontFamily="Menlo" FontSize="11" MinWidth="40" TextAlignment="Right" />
+                        <TextBlock Grid.Row="1" Text="Y · W/S" VerticalAlignment="Center" ToolTip.Tip="Forward / backward movement speed (W/S)" />
+                        <Slider x:Name="SpeedYSlider" Grid.Row="1" Grid.Column="2" Minimum="-1" Maximum="1" Value="0" Margin="0,-6" />
+                        <TextBlock x:Name="SpeedYText" Grid.Row="1" Grid.Column="4" VerticalAlignment="Center" FontFamily="Menlo" FontSize="11" MinWidth="40" TextAlignment="Right" />
+                        <TextBlock Grid.Row="2" Text="Z · Q/E" VerticalAlignment="Center" ToolTip.Tip="Down / up movement speed (Q/E)" />
+                        <Slider x:Name="SpeedZSlider" Grid.Row="2" Grid.Column="2" Minimum="-1" Maximum="1" Value="0" Margin="0,-6" />
+                        <TextBlock x:Name="SpeedZText" Grid.Row="2" Grid.Column="4" VerticalAlignment="Center" FontFamily="Menlo" FontSize="11" MinWidth="40" TextAlignment="Right" />
+                        <TextBlock Grid.Row="3" Text="Rotation" VerticalAlignment="Center" ToolTip.Tip="How fast mouse drags and the arrow keys turn the camera" />
+                        <Slider x:Name="RotationSlider" Grid.Row="3" Grid.Column="2" Minimum="-1" Maximum="1" Value="0" Margin="0,-6" />
+                        <TextBlock x:Name="RotationText" Grid.Row="3" Grid.Column="4" VerticalAlignment="Center" FontFamily="Menlo" FontSize="11" MinWidth="40" TextAlignment="Right" />
+                    </Grid>
+                    <Button Content="Reset Speeds" HorizontalAlignment="Right" Margin="0,4,0,0" Click="OnResetCameraSpeedsClick" />
+                </StackPanel>
                 <Grid x:Name="ListsGrid" RowDefinitions="*,Auto,0">
                 <ListBox x:Name="SectionsList" Background="Transparent">
                     <ListBox.ItemTemplate>
