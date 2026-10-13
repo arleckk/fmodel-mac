@@ -62,6 +62,8 @@ public sealed class GameArchive : IDisposable
     public IReadOnlyList<ArchiveEntry> Archives { get; }
     public string ProjectName => Provider.ProjectName;
     public TimeSpan LoadTime { get; }
+    /// <summary>Plugin mount points read from the game's .uplugin files (FModel logs "N virtual paths loaded").</summary>
+    public int VirtualPathCount { get; private init; }
     public int MountedCount => Archives.Count(a => a.IsMounted);
     public int LockedCount => Archives.Count(a => !a.IsMounted);
 
@@ -101,6 +103,18 @@ public sealed class GameArchive : IDisposable
             provider.PostMount();
             sw.Stop();
 
+            // FModel's LoadVirtualPaths: plugin content (/ACLPlugin/…, /MyPlugin/…) resolves through the .uplugin files,
+            // otherwise anything imported from a plugin (DSR's ACL compression settings, so every animation) is lost
+            var virtualPaths = 0;
+            try
+            {
+                virtualPaths = provider.LoadVirtualPaths(provider.Versions.Ver);
+            }
+            catch (Exception e)
+            {
+                Log.Warning(e, "Could not load the virtual paths");
+            }
+
             // global.utoc holds no files: it is only read as GlobalData, so it is not listed
             static bool Listed(IAesVfsReader r) => !r.Name.Equals("global.utoc", StringComparison.OrdinalIgnoreCase);
             var archives = provider.MountedVfs.Where(Listed).Select(r => new ArchiveEntry(r, true))
@@ -108,7 +122,7 @@ public sealed class GameArchive : IDisposable
                 .OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 
-            return new GameArchive(provider, archives, sw.Elapsed);
+            return new GameArchive(provider, archives, sw.Elapsed) { VirtualPathCount = virtualPaths };
         }
         catch
         {
@@ -308,7 +322,7 @@ public sealed class GameArchive : IDisposable
     private readonly Lock _importersLock = new();
     private Dictionary<string, GameFile[]>? _importers;
 
-    /// <summary>Set once the pak import index has been built.</summary>
+    /// <summary>Set once the pak import index has been built or loaded.</summary>
     public string? ReferenceIndexSummary { get; private set; }
 
     /// <summary>Whether Find References still has to read every package header of a pak game once.</summary>
@@ -317,7 +331,7 @@ public sealed class GameArchive : IDisposable
     /// <summary>
     /// FModel's Find References: the packages that import this one. FModel only reads IoStore container headers;
     /// packages in .pak archives (UE4 before IoStore, or mixed games) are covered by an index of every package's
-    /// imports, built once per mount from the package headers alone.
+    /// imports, built once per game from the package headers alone and kept on disk for the next launches.
     /// </summary>
     public IReadOnlyList<GameFile> FindReferences(GameFile file, IProgress<double>? progress = null, CancellationToken ct = default)
     {
@@ -325,14 +339,62 @@ public sealed class GameArchive : IDisposable
         var refs = new HashSet<GameFile>();
         if (file is FIoStoreEntry) refs.UnionWith(Provider.ScanForPackageRefs(file));
         if (ImportIndex(progress, ct).TryGetValue(file.PathWithoutExtension, out var importers)) refs.UnionWith(importers);
-        // The same package can sit in several containers: list the copy the provider uses, once
-        return refs.Select(f => Provider.Files.TryGetValue(f.Path, out var used) ? used : f)
+        return Used(refs, file);
+    }
+
+    /// <summary>
+    /// Find References without the pak index: IoStore packages are complete, pak packages are looked for only among
+    /// <paramref name="candidates"/> (say, the folders around the asset) by reading their headers.
+    /// </summary>
+    public IReadOnlyList<GameFile> FindReferencesAmong(GameFile file, IEnumerable<GameFile> candidates, CancellationToken ct = default)
+    {
+        if (!file.IsUePackage) return [];
+        var refs = new HashSet<GameFile>();
+        if (file is FIoStoreEntry) refs.UnionWith(Provider.ScanForPackageRefs(file));
+        var target = file.PathWithoutExtension;
+        var paks = candidates.Where(IsPakPackage).ToArray();
+        var found = new System.Collections.Concurrent.ConcurrentBag<GameFile>();
+        Parallel.ForEach(paks, new ParallelOptions { CancellationToken = ct }, candidate =>
+        {
+            if (ReadImports(candidate)?.Any(name => ImportPath(name).Equals(target, StringComparison.OrdinalIgnoreCase)) == true)
+                found.Add(candidate);
+        });
+        refs.UnionWith(found);
+        return Used(refs, file);
+    }
+
+    // The same package can sit in several containers: list the copy the provider uses, once
+    private IReadOnlyList<GameFile> Used(IEnumerable<GameFile> refs, GameFile file) =>
+        refs.Select(f => Provider.Files.TryGetValue(f.Path, out var used) ? used : f)
             .Where(f => !f.Path.Equals(file.Path, StringComparison.OrdinalIgnoreCase))
             .DistinctBy(f => f.Path, StringComparer.OrdinalIgnoreCase)
             .OrderBy(f => f.Path, StringComparer.OrdinalIgnoreCase).ToArray();
-    }
 
     private static bool IsPakPackage(GameFile file) => file is not FIoStoreEntry && file.IsUePackage;
+
+    // The packages a pak package imports (their /Game/... names), from its header alone
+    private string[]? ReadImports(GameFile file)
+    {
+        try
+        {
+            if (!file.TryCreateReader(out var archive)) return null;
+            using (archive)
+            {
+                // Header only: the summary, names, imports and exports live in the .uasset
+                var package = new Package(archive, null, ubulk: (FArchive?) null, provider: Provider);
+                return package.ImportMap.Where(import => import.ClassName.Text == "Package").Select(import => import.ObjectName.Text).ToArray();
+            }
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _importPaths = new(StringComparer.OrdinalIgnoreCase);
+
+    // "/Game/Characters/Hero" -> "Client/Content/Characters/Hero", as GameFile.PathWithoutExtension spells it
+    private string ImportPath(string name) => _importPaths.GetOrAdd(name, n => Provider.FixPath(n).SubstringBeforeLast('.'));
 
     private Dictionary<string, GameFile[]> ImportIndex(IProgress<double>? progress, CancellationToken ct)
     {
@@ -341,34 +403,25 @@ public sealed class GameArchive : IDisposable
             if (_importers is not null) return _importers;
 
             var sw = Stopwatch.StartNew();
+            var cache = ReferenceIndexCachePath();
+            if (cache is not null && LoadImportIndex(cache) is { } loaded)
+            {
+                ReferenceIndexSummary = $"Loaded the reference index of {loaded.Count:N0} packages in {sw.Elapsed.TotalSeconds:F2}s";
+                Log.Information(ReferenceIndexSummary);
+                return _importers = loaded;
+            }
+
             var packages = Provider.Files.Values.Where(IsPakPackage).ToArray();
             var imports = new (GameFile File, string[] Packages)[packages.Length];
             int done = 0, failed = 0;
             Parallel.For(0, packages.Length, new ParallelOptions { CancellationToken = ct }, i =>
             {
-                try
-                {
-                    if (packages[i].TryCreateReader(out var archive))
-                    {
-                        using (archive)
-                        {
-                            // Header only: the summary, names, imports and exports live in the .uasset
-                            var package = new Package(archive, null, ubulk: (FArchive?) null, provider: Provider);
-                            imports[i] = (packages[i], package.ImportMap
-                                .Where(import => import.ClassName.Text == "Package")
-                                .Select(import => import.ObjectName.Text).ToArray());
-                        }
-                    }
-                }
-                catch (Exception)
-                {
-                    Interlocked.Increment(ref failed);
-                }
+                if (ReadImports(packages[i]) is { } names) imports[i] = (packages[i], names);
+                else Interlocked.Increment(ref failed);
                 var count = Interlocked.Increment(ref done);
                 if (count % 500 == 0) progress?.Report((double) count / packages.Length);
             });
 
-            var paths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var index = new Dictionary<string, List<GameFile>>(StringComparer.OrdinalIgnoreCase);
             foreach (var (importer, names) in imports)
             {
@@ -376,15 +429,107 @@ public sealed class GameArchive : IDisposable
                 foreach (var name in names)
                 {
                     if (name.Length < 2 || name[0] != '/') continue; // script packages (/Script/Engine) have no file
-                    if (!paths.TryGetValue(name, out var path)) paths[name] = path = Provider.FixPath(name).SubstringBeforeLast('.');
+                    var path = ImportPath(name);
                     if (!index.TryGetValue(path, out var list)) index[path] = list = [];
                     list.Add(importer);
                 }
             }
+            _importers = index.ToDictionary(e => e.Key, e => e.Value.ToArray(), StringComparer.OrdinalIgnoreCase);
             ReferenceIndexSummary = $"Indexed the imports of {packages.Length:N0} packages in {sw.Elapsed.TotalSeconds:F2}s" +
                                     (failed > 0 ? $" ({failed:N0} unreadable)" : "");
             Log.Information(ReferenceIndexSummary);
-            return _importers = index.ToDictionary(e => e.Key, e => e.Value.ToArray(), StringComparer.OrdinalIgnoreCase);
+            if (cache is not null) SaveImportIndex(cache, _importers);
+            return _importers;
+        }
+    }
+
+    // ---------- The import index on disk ----------
+    // One file per set of mounted archives (their paths, sizes and dates), in the data directory's References folder
+
+    private const int ImportIndexVersion = 1;
+
+    private string? ReferenceIndexCachePath()
+    {
+        try
+        {
+            var signature = new System.Text.StringBuilder($"v{ImportIndexVersion}|{Provider.Versions.Game}|{Provider.Files.Count}");
+            foreach (var reader in Provider.MountedVfs.OrderBy(r => r.Path, StringComparer.Ordinal))
+            {
+                var info = new FileInfo(reader.Path);
+                signature.Append($"|{reader.Path}|{(info.Exists ? info.Length : 0)}|{(info.Exists ? info.LastWriteTimeUtc.Ticks : 0)}");
+            }
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(signature.ToString())));
+            return Path.Combine(AppSettings.DataDirectory, "References", $"{hash}.bin");
+        }
+        catch (Exception e)
+        {
+            Log.Warning(e, "No reference index cache for this game");
+            return null;
+        }
+    }
+
+    private Dictionary<string, GameFile[]>? LoadImportIndex(string path)
+    {
+        if (!File.Exists(path)) return null;
+        try
+        {
+            using var reader = new BinaryReader(File.OpenRead(path));
+            if (reader.ReadInt32() != ImportIndexVersion) return null;
+            // Provider.Files.TryGetValue walks every mounted archive's index per lookup: map the paths once instead
+            var byPath = new Dictionary<string, GameFile>(StringComparer.OrdinalIgnoreCase);
+            foreach (var file in Provider.Files.Values) byPath.TryAdd(file.Path, file);
+            var files = new GameFile?[reader.ReadInt32()];
+            for (var i = 0; i < files.Length; i++)
+                files[i] = byPath.GetValueOrDefault(reader.ReadString());
+            var count = reader.ReadInt32();
+            var index = new Dictionary<string, GameFile[]>(count, StringComparer.OrdinalIgnoreCase);
+            for (var i = 0; i < count; i++)
+            {
+                var key = reader.ReadString();
+                var importers = new GameFile[reader.ReadInt32()];
+                var n = 0;
+                for (var k = 0; k < importers.Length; k++)
+                    if (files[reader.ReadInt32()] is { } file) importers[n++] = file;
+                index[key] = n == importers.Length ? importers : importers[..n];
+            }
+            return index;
+        }
+        catch (Exception e)
+        {
+            Log.Warning(e, "Could not read the reference index {Path}", path);
+            return null;
+        }
+    }
+
+    private static void SaveImportIndex(string path, Dictionary<string, GameFile[]> index)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var ids = new Dictionary<GameFile, int>();
+            var files = new List<GameFile>();
+            foreach (var file in index.Values.SelectMany(f => f))
+                if (ids.TryAdd(file, files.Count)) files.Add(file);
+
+            var temp = path + ".tmp";
+            using (var writer = new BinaryWriter(File.Create(temp)))
+            {
+                writer.Write(ImportIndexVersion);
+                writer.Write(files.Count);
+                foreach (var file in files) writer.Write(file.Path);
+                writer.Write(index.Count);
+                foreach (var (key, importers) in index)
+                {
+                    writer.Write(key);
+                    writer.Write(importers.Length);
+                    foreach (var importer in importers) writer.Write(ids[importer]);
+                }
+            }
+            File.Move(temp, path, overwrite: true);
+        }
+        catch (Exception e)
+        {
+            Log.Warning(e, "Could not save the reference index {Path}", path);
         }
     }
 

@@ -90,7 +90,10 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
   References, cada una con filtro, columna Archive y el mismo menú contextual. FModel sólo encuentra
   referencias en juegos IoStore (lee el encabezado del contenedor); aquí también funciona con `.pak`:
   la primera vez se leen los encabezados de todos los paquetes y se arma un índice de imports
-  (38,302 paquetes de FF VII en 0.7 s) que dura hasta que se vuelve a montar el juego.
+  (38,302 paquetes de FF VII en 0.7 s; 103,780 de DSR en ~30 s) que se guarda en disco, por juego y
+  por conjunto de archivos montados, así que las siguientes veces carga en una fracción de segundo.
+  Al montar se cargan las *virtual paths* de los `.uplugin` como en FModel, para que lo importado
+  desde plugins (`/ACLPlugin/…`) se resuelva: sin ellas DSR no decodificaba ninguna animación.
 - **Visor 3D** (Views › 3D Viewer, o doble clic sobre una malla): mallas estáticas y con
   esqueleto (LOD 0) con su textura difusa, grid, wireframe, esqueleto, visibilidad por material
   y captura PNG. El sombreado es PBR (GGX), con texturas en sRGB, tone mapping ACES, una luz
@@ -135,8 +138,26 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
   mapa, cada data layer de runtime es un elemento aparte (visible si empieza activado en el juego)
   y cada capa HLOD otro, oculto por defecto. Cielos y fondos gigantes van a un elemento aparte,
   oculto por defecto.
+  Al seleccionar una malla con esqueleto, la sección **ANIMATIONS** lista las animaciones hechas
+  para su esqueleto (o sus esqueletos compatibles) en cualquier juego: toda animación apunta al
+  esqueleto con que se hizo, así que son los paquetes que lo referencian cuyo export principal es
+  una secuencia, montage, composite, blend space o aim offset. Un clic la reproduce; el filtro busca
+  por nombre. En juegos .pak el índice de referencias se arma una vez (DSR: ~30 s) y se guarda en
+  `References/` del directorio de datos (luego carga en 0.1 s); mientras tanto la lista muestra lo
+  que hay en las carpetas cercanas al esqueleto.
+  Los **notifies** de la animación aparecen como marcas bajo la barra de tiempo (naranja: efecto,
+  verde: sonido, gris: evento; pasa el mouse para ver el detalle, clic para saltar ahí). Se leen sin
+  conocer las clases del juego: lo que referencia cada notify decide su tipo (un sistema Niagara o
+  Cascade es un efecto, un asset de sonido un sonido, una propiedad *Socket*/*Bone* el punto de
+  anclaje), así funcionan igual los de UE (`AnimNotify_PlayNiagaraEffect`, `PlayParticleEffect`,
+  `TimedParticleEffect`, `PlaySound`) y los propios de cada juego (DSR, FF VII); un sonido nombrado
+  sólo por su evento se busca como paquete de ese nombre (o `_Cue`). Los montages incluyen los
+  notifies de las secuencias que reproducen. Con **Sounds** los sonidos suenan sincronizados
+  (SoundWave, SoundCue, Wwise, etc., por el mismo extractor del Audio Player); con **Effects** cada
+  efecto activo se marca con una estrella y su nombre en su socket mientras dura. Las partículas en
+  sí no se dibujan (Niagara corre scripts compilados que habría que interpretar).
   Con una malla con esqueleto abierta, doble clic en una animación (secuencia, montage o
-  composite) la reproduce: play/pausa, barra de tiempo, velocidad, bucle y root motion opcional.
+  composite) también la reproduce: play/pausa, barra de tiempo, velocidad, bucle y root motion opcional.
   Los **blend spaces** (1D y 2D) muestran un slider por eje y mezclan sus muestras con la
   cuadrícula de pesos que UE cocina (`GridSamples`), sincronizadas por fase. Los **morph targets**
   aparecen con un slider cada uno; si la animación trae curvas con el mismo nombre, ellas mandan.
@@ -303,6 +324,7 @@ dotnet run -- --export-options ./out <carpeta Paks> GAME_UE4_25 <AES|-> Game/Con
 dotnet run -- --export <carpeta Paks> GAME_UE4_25 <AES> ./out 3
 # Abre el visor 3D real (OpenGL, necesita la pantalla encendida) y guarda capturas: mallas,
 # animaciones/blend spaces sobre la última malla, "morph:<nombre|*>=<peso>" para los sliders y
+# "anims", "anim:<nombre>", "seek:<seg>" y "play:<seg>" (lista de animaciones, notifies, marcadores y sonidos),
 # "normalmaps:off|on", "mode:orbit|fly", "key:W[+Shift]=<seg>" (mantiene la tecla y dice cuánto se movió la
 # cámara), "slider:SpeedX|SpeedY|SpeedZ|Rotation=<multiplicador>", "drag:dx,dy" y "hittest"; revisa el marco tangente, con FMODELMAC_MASKS=N lista las máscaras de un
 # mapa y captura un acercamiento al landscape con y sin texturas
@@ -320,6 +342,8 @@ dotnet run -- --versioning ./out <carpeta Paks> GAME_UE4_25 <AES|->
 dotnet run -- --decode sonido.wav wav salida.f32
 # Imprime el JSON de paquetes (o --scan-morphs para listar mallas con morph targets)
 dotnet run -- --json <carpeta Paks> GAME_UE4_25 <AES|-> Game/Content/.../Paquete.uasset
+# Animaciones de una malla con esqueleto (búsqueda por referencias) y sus notifies; decodifica el primer sonido
+dotnet run -- --json <carpeta Paks> GAME_UE4_25 <AES|-> --animations Game/Content/.../Malla.uasset
 # Parámetros de un material (texturas con promedio ± desviación por canal, colores, escalares)
 dotnet run -- --json <carpeta Paks> GAME_UE4_25 <AES|-> --material Game/Content/.../MI_Algo.uasset
 # Find References (con el tiempo del índice) y el tamaño de Show Metadata

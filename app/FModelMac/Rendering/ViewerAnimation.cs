@@ -32,8 +32,11 @@ public sealed class ViewerAnimation : IViewerMotion
     public int FrameCount => Segments.Sum(s => s.Sequence.NumFrames);
     public float FrameRate => Segments.Length > 0 ? Segments[0].Sequence.FramesPerSecond : 30;
     public IReadOnlyList<ViewerAnimation> Clips => [this];
+    /// <summary>Effects, sounds and other events on this animation's timeline.</summary>
+    public ViewerNotify[] Notifies { get; private set; } = [];
 
-    public static ViewerAnimation FromExport(UAnimationAsset asset)
+    /// <param name="soundByName">Finds a sound package by name, for notifies that only name their sound event.</param>
+    public static ViewerAnimation FromExport(UAnimationAsset asset, Func<string, string?>? soundByName = null)
     {
         var set = asset.ConvertAnims();
         var segments = set.Sequences
@@ -48,7 +51,16 @@ public sealed class ViewerAnimation : IViewerMotion
             .ToArray();
         if (segments.Length == 0) throw new InvalidOperationException($"{asset.Name} has no animation tracks");
 
-        return new ViewerAnimation { Name = asset.Name, SkeletonName = set.Skeleton.Name, Set = set, Segments = segments };
+        var animation = new ViewerAnimation { Name = asset.Name, SkeletonName = set.Skeleton.Name, Set = set, Segments = segments };
+        try
+        {
+            animation.Notifies = NotifyReader.Read(asset, animation, soundByName);
+        }
+        catch (Exception e)
+        {
+            Serilog.Log.Warning(e, "Could not read the notifies of {Animation}", asset.GetPathName());
+        }
+        return animation;
     }
 }
 

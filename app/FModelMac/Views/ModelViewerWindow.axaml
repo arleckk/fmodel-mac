@@ -2,6 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:c="using:FModelMac.Controls"
         xmlns:r="using:FModelMac.Rendering"
+        xmlns:s="using:FModelMac.Services"
         x:Class="FModelMac.Views.ModelViewerWindow"
         Title="3D Viewer"
         Width="1280" Height="800" MinWidth="640" MinHeight="400"
@@ -32,9 +33,13 @@
         <!-- Animation timeline, shown once an animation is playing on a skeletal mesh -->
         <Border x:Name="TimelineBar" DockPanel.Dock="Bottom" Background="{StaticResource Layer1BackgroundBrush}"
                 Padding="8,6" IsVisible="False">
-            <Grid ColumnDefinitions="Auto,8,*,10,Auto,12,Auto,8,Auto,8,Auto,8,Auto" RowDefinitions="Auto,Auto,Auto,Auto">
+            <Grid ColumnDefinitions="Auto,8,*,10,Auto,12,Auto,8,Auto,8,Auto,8,Auto,8,Auto,8,Auto" RowDefinitions="Auto,Auto,Auto,Auto">
                 <Button x:Name="PlayButton" MinWidth="64" Content="Pause" Click="OnPlayPauseClick" />
-                <Slider x:Name="TimeSlider" Grid.Column="2" Minimum="0" Maximum="1" VerticalAlignment="Center" />
+                <!-- The time slider, and the animation's notifies under it (effects, sounds, events): hover for details, click to jump -->
+                <Grid Grid.Column="2" RowDefinitions="Auto,Auto" VerticalAlignment="Center">
+                    <Slider x:Name="TimeSlider" Minimum="0" Maximum="1" VerticalAlignment="Center" />
+                    <Canvas x:Name="NotifyStrip" Grid.Row="1" Height="12" Margin="10,-6,10,0" Background="Transparent" IsVisible="False" />
+                </Grid>
                 <TextBlock x:Name="TimeText" Grid.Column="4" VerticalAlignment="Center" FontFamily="Menlo" FontSize="11" />
                 <ComboBox x:Name="SpeedBox" Grid.Column="6" SelectedIndex="2" VerticalAlignment="Center">
                     <ComboBoxItem Content="0.25×" />
@@ -45,7 +50,11 @@
                 <CheckBox x:Name="LoopToggle" Grid.Column="8" Content="Loop" IsChecked="True" VerticalAlignment="Center" />
                 <CheckBox x:Name="RootMotionToggle" Grid.Column="10" Content="Root motion" VerticalAlignment="Center"
                           ToolTip.Tip="Let the animation move the whole model, as in game" />
-                <Button Grid.Column="12" Content="Stop" ToolTip.Tip="Back to the reference pose" Click="OnStopAnimationClick" />
+                <CheckBox x:Name="SoundsToggle" Grid.Column="12" Content="Sounds" IsChecked="True" VerticalAlignment="Center"
+                          ToolTip.Tip="Play the sounds of the animation's notifies" />
+                <CheckBox x:Name="EffectsToggle" Grid.Column="14" Content="Effects" IsChecked="True" VerticalAlignment="Center"
+                          ToolTip.Tip="Mark where the animation's particle effects spawn, while they play" />
+                <Button Grid.Column="16" Content="Stop" ToolTip.Tip="Back to the reference pose" Click="OnStopAnimationClick" />
                 <!-- Blend space parameters (one row per axis) -->
                 <TextBlock x:Name="AxisXName" Grid.Row="1" VerticalAlignment="Center" Margin="0,6,0,0" />
                 <Slider x:Name="AxisXSlider" Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" Margin="0,6,0,0" />
@@ -53,9 +62,9 @@
                 <TextBlock x:Name="AxisYName" Grid.Row="2" VerticalAlignment="Center" />
                 <Slider x:Name="AxisYSlider" Grid.Row="2" Grid.Column="2" VerticalAlignment="Center" />
                 <TextBlock x:Name="AxisYValue" Grid.Row="2" Grid.Column="4" VerticalAlignment="Center" FontFamily="Menlo" FontSize="11" />
-                <TextBlock x:Name="BlendWeightsText" Grid.Row="1" Grid.RowSpan="2" Grid.Column="6" Grid.ColumnSpan="7" Classes="dim"
+                <TextBlock x:Name="BlendWeightsText" Grid.Row="1" Grid.RowSpan="2" Grid.Column="6" Grid.ColumnSpan="11" Classes="dim"
                            FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,6,0,0" />
-                <TextBlock x:Name="AnimationText" Grid.Row="3" Grid.ColumnSpan="13" Classes="dim" FontSize="11" Margin="0,4,0,0" />
+                <TextBlock x:Name="AnimationText" Grid.Row="3" Grid.ColumnSpan="17" Classes="dim" FontSize="11" Margin="0,4,0,0" />
             </Grid>
         </Border>
 
@@ -119,7 +128,7 @@
                     </Grid>
                     <Button Content="Reset Speeds" HorizontalAlignment="Right" Margin="0,4,0,0" Click="OnResetCameraSpeedsClick" />
                 </StackPanel>
-                <Grid x:Name="ListsGrid" RowDefinitions="*,Auto,0">
+                <Grid x:Name="ListsGrid" RowDefinitions="*,Auto,0,Auto,0">
                 <ListBox x:Name="SectionsList" Background="Transparent">
                     <ListBox.ItemTemplate>
                         <DataTemplate x:DataType="r:ViewerSection">
@@ -161,6 +170,22 @@
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
+                <!-- The animations made for the selected mesh's skeleton: click one to play it -->
+                <StackPanel x:Name="AnimationsHeader" Grid.Row="3" IsVisible="False">
+                    <c:SectionSeparator Text="ANIMATIONS" />
+                    <TextBox x:Name="AnimationFilter" Watermark="Filter animations" Margin="0,0,0,4" />
+                    <TextBlock x:Name="AnimationsStatus" Classes="dim" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,4" />
+                </StackPanel>
+                <ListBox x:Name="AnimationsList" Grid.Row="4" Background="Transparent">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="s:AnimationEntry">
+                            <DockPanel ToolTip.Tip="{Binding File.Path}">
+                                <TextBlock DockPanel.Dock="Right" Text="{Binding Kind}" Classes="dim" FontSize="11" Margin="6,0,0,0" VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                            </DockPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
                 </Grid>
             </DockPanel>
         </Border>
@@ -172,6 +197,8 @@
                              ShowGrid="{Binding #GridToggle.IsChecked}"
                              Wireframe="{Binding #WireframeToggle.IsChecked}"
                              ShowBones="{Binding #BonesToggle.IsChecked}" />
+            <!-- Names of the effects playing, next to their markers in the view -->
+            <Canvas x:Name="MarkerLabels" IsHitTestVisible="False" ClipToBounds="True" />
             <TextBlock x:Name="PlaceholderText" HorizontalAlignment="Center" VerticalAlignment="Center" Classes="dim"
                        Text="Double-click meshes in Packages to add them here, a map to explore it, or an animation to play it on the selected mesh" IsHitTestVisible="False" />
             <TextBlock x:Name="HintText" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="10,0,10,8" Classes="dim"

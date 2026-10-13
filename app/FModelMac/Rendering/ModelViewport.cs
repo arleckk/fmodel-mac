@@ -745,6 +745,7 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
                 Line(Vector3.Transform(globals[i].Translation, placement), Vector3.Transform(globals[bones[i].ParentIndex].Translation, placement), color);
             }
         }
+        DrawEffectMarkers(Line, viewProjection);
         if (data.Count == 0) return;
 
         gl.Disable(Gl.DEPTH_TEST);
@@ -763,6 +764,57 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
         gl.BindVertexArray(0);
         gl.Disable(Gl.BLEND);
         gl.Enable(Gl.DEPTH_TEST);
+    }
+
+    // ---------- Effect markers (animation notifies) ----------
+
+    /// <summary>Effects playing on animated objects, each drawn as a star at its socket.</summary>
+    public IReadOnlyList<EffectMarker> EffectMarkers
+    {
+        get => _effectMarkers;
+        set
+        {
+            if (_effectMarkers.Count == 0 && value.Count == 0) return;
+            _effectMarkers = value;
+            RequestNextFrameRendering();
+        }
+    }
+    private IReadOnlyList<EffectMarker> _effectMarkers = [];
+    private bool _hadMarkers;
+
+    /// <summary>Where the markers of the last frame are in the view (in its own coordinates; null when behind the camera).</summary>
+    public event Action<IReadOnlyList<(EffectMarker Marker, Point? Position)>>? MarkersProjected;
+
+    /// <summary>A marker's position in viewer space, as of the last pose.</summary>
+    public static Vector3 MarkerPosition(EffectMarker marker)
+    {
+        var obj = marker.Object;
+        var globals = obj.Pose?.Globals ?? AnimationPose.ReferenceGlobals(obj.Model);
+        var bone = marker.Bone >= 0 && marker.Bone < globals.Length ? globals[marker.Bone] : Matrix4x4.Identity;
+        return Vector3.Transform(Vector3.Transform(Vector3.Zero, marker.Local * bone), obj.Instances[0]);
+    }
+
+    private void DrawEffectMarkers(Action<Vector3, Vector3, Vector3> line, Matrix4x4 viewProjection)
+    {
+        var markers = _effectMarkers;
+        if (markers.Count == 0 && !_hadMarkers) return;
+        _hadMarkers = markers.Count > 0;
+
+        var projected = new List<(EffectMarker, Point?)>(markers.Count);
+        foreach (var marker in markers)
+        {
+            var center = MarkerPosition(marker);
+            var placement = marker.Object.Instances[0];
+            var size = Math.Max(marker.Object.Model.Radius * 0.06f, 1f) * new Vector3(placement.M11, placement.M12, placement.M13).Length();
+            foreach (var axis in new[] { Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ, Vector3.Normalize(new Vector3(1, 1, 1)), Vector3.Normalize(new Vector3(-1, 1, 1)) })
+                line(center - axis * size, center + axis * size, marker.Color);
+
+            var clip = Vector4.Transform(new Vector4(center, 1), viewProjection);
+            projected.Add((marker, clip.W <= 1e-4f
+                ? null
+                : new Point((clip.X / clip.W * 0.5 + 0.5) * Bounds.Width, (0.5 - clip.Y / clip.W * 0.5) * Bounds.Height)));
+        }
+        if (MarkersProjected is { } handler) Dispatcher.UIThread.Post(() => handler(projected));
     }
 
     private static int CreateTexture(Gl gl, int width, int height, byte[] rgba)
@@ -1131,6 +1183,9 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
         RequestNextFrameRendering();
     }
 }
+
+/// <summary>An effect shown while its notify plays: a star at the socket's bone (offset by the socket) of an object.</summary>
+public sealed record EffectMarker(SceneObject Object, int Bone, Matrix4x4 Local, string Label, Vector3 Color);
 
 /// <summary>FModel's camera modes: Arcball (orbit around a target) and Fly Cam (move and look like in a game).</summary>
 public enum CameraMode

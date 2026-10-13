@@ -8,6 +8,7 @@ using CUE4Parse.UE4.Assets.Exports.Component.Landscape;
 using CUE4Parse.UE4.Assets.Exports.Component.SplineMesh;
 using CUE4Parse.UE4.Assets.Exports.Engine;
 using CUE4Parse.UE4.Assets.Exports.Material;
+using CUE4Parse.UE4.Assets.Exports.SkeletalMesh;
 using CUE4Parse.UE4.Assets.Exports.StaticMesh;
 using CUE4Parse.UE4.Assets.Exports.Texture;
 using CUE4Parse.UE4.Objects.Core.Math;
@@ -50,6 +51,10 @@ public sealed record ViewerTexture(string Name, int Width, int Height, byte[] Rg
 
 /// <summary>Reference-pose bone in UE space (left-handed, Z-up); <see cref="ViewerAnimation"/> converts it.</summary>
 public sealed record ViewerBone(string Name, int ParentIndex, FQuat Rotation, FVector Position, FVector Scale);
+
+/// <summary>A named attach point on a bone (UE's skeletal mesh socket): effects and props spawn there.</summary>
+/// <param name="Local">Transform relative to the bone, in viewer space.</param>
+public sealed record ViewerSocket(string Name, int Bone, Matrix4x4 Local);
 
 /// <summary>
 /// A morph target (blend shape) of LOD 0: per-vertex position and normal deltas in viewer space.
@@ -193,6 +198,20 @@ public sealed class ViewerModel
     public float[]? Skin { get; init; }
     public bool IsSkinned => Bones is { Length: > 0 } && Skin is not null;
     public ViewerMorph[] Morphs { get; init; } = [];
+    /// <summary>The skeleton's object path, and those of the skeletons it shares animations with (UE5's compatible skeletons).</summary>
+    public string? SkeletonPath { get; init; }
+    public string[] CompatibleSkeletons { get; init; } = [];
+    /// <summary>The mesh's and the skeleton's sockets (the mesh's win on a name clash).</summary>
+    public ViewerSocket[] Sockets { get; init; } = [];
+
+    /// <summary>The bone a socket (or a bone, by its own name) is attached to, and the offset from that bone.</summary>
+    public (int Bone, Matrix4x4 Local)? FindAttachPoint(string name)
+    {
+        if (Sockets.FirstOrDefault(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) is { } socket) return (socket.Bone, socket.Local);
+        var bone = Array.FindIndex(Bones ?? [], b => b.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        return bone >= 0 ? (bone, Matrix4x4.Identity) : null;
+    }
+
     public Vector3 Min { get; init; }
     public Vector3 Max { get; init; }
 
@@ -211,8 +230,9 @@ public sealed class ViewerModel
         return export switch
         {
             UStaticMesh mesh => Build(new StaticMeshDto(mesh, EMeshQuality.Highest, ENaniteMeshFormat.NoNanite), "Static Mesh", context, overrideMaterials, ct),
-            USkinnedAsset mesh => BuildSkinned(WithMorphData(mesh), context, overrideMaterials, ct),
-            USkeleton skeleton => FromSkeleton(skeleton),
+            USkinnedAsset mesh => WithSkeleton(BuildSkinned(WithMorphData(mesh), context, overrideMaterials, ct),
+                mesh.Skeleton?.TryLoad<USkeleton>(out var skeleton) == true ? skeleton : null, mesh.Sockets),
+            USkeleton skeleton => WithSkeleton(FromSkeleton(skeleton), skeleton, []),
             _ => throw new NotSupportedException($"{export.ExportType} can't be shown in the 3D viewer")
         };
     }
@@ -363,6 +383,33 @@ public sealed class ViewerModel
             Bones = mesh.Bones.Select(b => new ViewerBone(b.Name, b.ParentIndex, b.Transform.Rotation, b.Transform.Translation, b.Transform.Scale3D)).ToArray(),
             Skin = skin,
             Morphs = LoadMorphs(mesh.MorphTargets, (int) lod.SourceLodIndex, lod.Vertices.Length)
+        };
+    }
+
+    // The skeleton (to find the animations made for it) and the sockets of the mesh and the skeleton
+    private static ViewerModel WithSkeleton(ViewerModel model, USkeleton? skeleton, FPackageIndex[] meshSockets)
+    {
+        if (skeleton is null) return model;
+        var compatible = skeleton.GetOrDefault<FSoftObjectPath[]>("CompatibleSkeletons", [])
+            .Select(p => p.AssetPathName.Text).Where(p => !string.IsNullOrEmpty(p) && p != "None").ToArray();
+
+        var sockets = new List<ViewerSocket>();
+        foreach (var pointer in meshSockets.Concat(skeleton.Sockets))
+        {
+            if (!pointer.TryLoad<USkeletalMeshSocket>(out var socket)) continue;
+            var name = socket.SocketName.Text;
+            if (sockets.Any(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase))) continue;
+            var bone = Array.FindIndex(model.Bones ?? [], b => b.Name.Equals(socket.BoneName.Text, StringComparison.OrdinalIgnoreCase));
+            if (bone < 0) continue;
+            sockets.Add(new ViewerSocket(name, bone,
+                ViewerMath.ToViewer(socket.RelativeRotation.Quaternion(), socket.RelativeLocation, socket.RelativeScale)));
+        }
+
+        return new ViewerModel
+        {
+            Name = model.Name, Kind = model.Kind, Vertices = model.Vertices, Indices = model.Indices, Sections = model.Sections,
+            LodCount = model.LodCount, Min = model.Min, Max = model.Max, Bones = model.Bones, Skin = model.Skin, Morphs = model.Morphs,
+            SkeletonPath = skeleton.GetPathName(), CompatibleSkeletons = compatible, Sockets = sockets.ToArray()
         };
     }
 

@@ -68,6 +68,7 @@ public partial class ModelViewerWindow : Window
             }
         };
         UpdateHint();
+        InitializeAnimations();
         foreach (var slider in new[] { SpeedXSlider, SpeedYSlider, SpeedZSlider, RotationSlider })
             slider.PropertyChanged += (_, e) =>
             {
@@ -261,6 +262,8 @@ public partial class ModelViewerWindow : Window
         ListsGrid.RowDefinitions[2].Height = hasMorphs ? new GridLength(1.5, GridUnitType.Star) : new GridLength(0);
         UpdateMorphsInfo();
 
+        ShowAnimationsFor(single);
+
         BonesToggle.IsEnabled = single is { IsSkinned: true };
         if (!BonesToggle.IsEnabled) BonesToggle.IsChecked = false;
         else if (single is { VertexCount: 0 }) BonesToggle.IsChecked = true; // a skeleton: nothing else to see
@@ -292,6 +295,7 @@ public partial class ModelViewerWindow : Window
         target.Pose = pose;
         TimelineBar.IsVisible = true;
         SetupBlendSpace(motion as ViewerBlendSpace);
+        SetupNotifies(motion as ViewerAnimation);
 
         var bones = target.Model.Bones!.Length;
         var mapped = $"{pose.MappedBones}/{bones} bones of {target.Model.Name} mapped from {motion.SkeletonName}";
@@ -302,7 +306,7 @@ public partial class ModelViewerWindow : Window
             ViewerBlendSpace bs => $"{bs.Name} · blend space with {bs.Samples.Length} samples on {bs.Axes.Length} " +
                                    $"{(bs.Axes.Length > 1 ? "axes" : "axis")}{curveText} · {mapped}",
             ViewerAnimation a => $"{a.Name} · {a.Duration:0.00} s · {a.FrameCount:N0} frames at {a.FrameRate:0.#} fps · " +
-                                 $"{a.Segments.Length} sequence(s){curveText} · {mapped}",
+                                 $"{a.Segments.Length} sequence(s){curveText}{NotifySummary(a)} · {mapped}",
             _ => mapped
         };
 
@@ -368,6 +372,7 @@ public partial class ModelViewerWindow : Window
         _pose = null;
         _phase = 0;
         TimelineBar.IsVisible = false;
+        SetupNotifies(null);
         UpdateMorphsInfo();
         Viewport.RequestNextFrameRendering();
     }
@@ -393,16 +398,23 @@ public partial class ModelViewerWindow : Window
 
         var elapsed = (float) _frameWatch.Elapsed.TotalSeconds;
         _frameWatch.Restart();
+        var before = _phase;
+        var wrapped = false;
         _phase += elapsed * Speeds[Math.Clamp(SpeedBox.SelectedIndex, 0, Speeds.Length - 1)] / _pose.Duration;
         if (_phase > 1)
         {
-            if (LoopToggle.IsChecked == true) _phase %= 1;
+            if (LoopToggle.IsChecked == true)
+            {
+                _phase %= 1;
+                wrapped = true;
+            }
             else
             {
                 _phase = 1;
                 SetPlaying(false);
             }
         }
+        FireNotifySounds(before, _phase, wrapped);
         UpdateTime();
     }
 
@@ -422,6 +434,9 @@ public partial class ModelViewerWindow : Window
 
     public void Pause() => SetPlaying(false);
 
+    /// <summary>Plays from the current time (test harness).</summary>
+    public void Resume() => SetPlaying(true);
+
     private void UpdateTime()
     {
         Viewport.AnimationPhase = _phase;
@@ -431,6 +446,7 @@ public partial class ModelViewerWindow : Window
         var duration = _pose?.Duration ?? 0;
         var frame = _motion is ViewerAnimation a ? $"  #{(int) (_phase * duration * a.FrameRate)}" : "";
         TimeText.Text = $"{_phase * duration:0.00} / {duration:0.00} s{frame}";
+        UpdateEffectMarkers();
     }
 
     private void UpdateMorphsInfo()

@@ -656,6 +656,47 @@ if (args is ["--json", var jsonPaks, var jsonGame, var jsonAes, ..])
         return;
     }
 
+    // "--json ... --animations <mesh>" lists the animations found for a skeletal mesh, with their notifies,
+    // and decodes the first notify sound
+    if (args[4..] is ["--animations", var meshPath])
+    {
+        var meshExport = AssetPreview.LoadExports(jsonProvider, jsonProvider[meshPath]).First(FModelMac.Rendering.ViewerModel.CanView);
+        var meshModel = FModelMac.Rendering.ViewerModel.FromExport(meshExport);
+        Console.WriteLine($"{meshModel.Name}: skeleton {meshModel.SkeletonPath}, compatible [{string.Join(", ", meshModel.CompatibleSkeletons)}], " +
+                          $"{meshModel.Sockets.Length} socket(s) [{string.Join(", ", meshModel.Sockets.Take(12).Select(x => x.Name))}]");
+        var animWatch = System.Diagnostics.Stopwatch.StartNew();
+        var entries = await vm.FindAnimationsAsync(meshModel,
+            partial => Console.WriteLine($"  partial ({animWatch.Elapsed.TotalSeconds:F1}s): {partial.Count} animation(s)"),
+            new Progress<double>(p => { }), CancellationToken.None);
+        Console.WriteLine($"  {entries.Count} animation(s) in {animWatch.Elapsed.TotalSeconds:F1}s");
+        string? firstSound = null;
+        foreach (var entry in entries.Take(int.Parse(Environment.GetEnvironmentVariable("FMODELMAC_ANIMS") ?? "40")))
+        {
+            try
+            {
+                var motion = await vm.LoadMotionAsync(entry.File);
+                var notifies = motion is FModelMac.Rendering.ViewerAnimation a ? a.Notifies : [];
+                Console.WriteLine($"  {entry.Kind,-11} {entry.Name}: {notifies.Length} notify(s)");
+                foreach (var n in notifies.Take(8))
+                {
+                    var attach = n.Socket is { } socket ? meshModel.FindAttachPoint(socket) is { } point ? $" -> bone {meshModel.Bones![point.Bone].Name}" : " -> (not found)" : "";
+                    Console.WriteLine($"      [{n.Kind}] {n.Description}{attach} | {n.AssetPath}");
+                }
+                firstSound ??= notifies.FirstOrDefault(n => n.Kind == FModelMac.Rendering.NotifyKind.Sound)?.AssetPath;
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"  {entry.Kind,-11} {entry.Name}: failed: {e.Message}");
+            }
+        }
+        if (firstSound is not null)
+        {
+            var pcm = await vm.DecodeNotifySoundAsync(firstSound);
+            Console.WriteLine($"  sound {firstSound}: {(pcm is null ? "not decoded" : $"{pcm.Duration.TotalSeconds:0.00}s, {pcm.Channels} ch, {pcm.SampleRate} Hz ({pcm.Encoding})")}");
+        }
+        return;
+    }
+
     // "--json ... --list-files <regex>" lists matching files plus a count per extension
     if (args[4..] is ["--list-files", var pattern])
     {
@@ -888,7 +929,7 @@ async Task ViewerTestAsync(string outputDir, string[] packages)
     var provider = vm.Archive.Provider;
     Console.WriteLine($"Init: {vm.StatusText} | {vm.StatusExtra}");
 
-    var viewer = new ModelViewerWindow { Width = 1280, Height = 800 };
+    var viewer = new ModelViewerWindow { Width = 1280, Height = 800, AnimationSource = vm };
     var ready = new TaskCompletionSource();
     viewer.ModelViewport.RendererReady += (_, _) => ready.TrySetResult();
     viewer.Show();
@@ -929,6 +970,50 @@ async Task ViewerTestAsync(string outputDir, string[] packages)
         if (package.StartsWith("capture:"))
         {
             await Capture(package[8..]);
+            continue;
+        }
+
+        // "anims" waits for the ANIMATIONS list of the selected mesh; "anim:<name>" plays one of them (paused);
+        // "seek:<seconds>" jumps there and captures (effect markers) ; "play:<seconds>" plays in real time and counts sounds
+        if (package == "anims")
+        {
+            var listed = new TaskCompletionSource();
+            viewer.AnimationsListed += () => listed.TrySetResult();
+            var listWatch = System.Diagnostics.Stopwatch.StartNew();
+            if (viewer.AnimationEntries.Count == 0) await Task.WhenAny(listed.Task, Task.Delay(TimeSpan.FromMinutes(3)));
+            var list = viewer.AnimationEntries;
+            Console.WriteLine($"animations: {list.Count} in {listWatch.Elapsed.TotalSeconds:F1}s ({string.Join(", ", list.GroupBy(e => e.Kind).Select(g => $"{g.Count()} {g.Key}"))}): " +
+                              string.Join(", ", list.Take(8).Select(e => e.Name)));
+                        continue;
+        }
+        if (package.StartsWith("anim:"))
+        {
+            var entry = viewer.AnimationEntries.FirstOrDefault(e => e.Name.Equals(package[5..], StringComparison.OrdinalIgnoreCase));
+            if (entry is null) { Console.WriteLine($"no animation {package[5..]} in the list"); continue; }
+            var error = await viewer.PlayEntryAsync(entry);
+            viewer.Pause();
+            var notifies = viewer.Motion is ViewerAnimation va ? va.Notifies : [];
+            Console.WriteLine($"{entry.Kind} {entry.Name}: {error ?? "playing"} · {notifies.Length} notify(s)");
+            continue;
+        }
+        if (package.StartsWith("seek:"))
+        {
+            var seconds = float.Parse(package[5..], System.Globalization.CultureInfo.InvariantCulture);
+            viewer.Seek(seconds);
+            await Capture($"seek-{seconds:0.00}");
+            await Task.Delay(150);
+            Console.WriteLine($"t={viewer.AnimationTime:0.00}s markers: {string.Join("; ", viewer.MarkerLabelPositions.Select(m => $"{m.Label} @ {(m.Position is { } p ? $"{p.X:0},{p.Y:0}" : "off-screen")}"))}");
+            continue;
+        }
+        if (package.StartsWith("play:"))
+        {
+            var seconds = double.Parse(package[5..], System.Globalization.CultureInfo.InvariantCulture);
+            var before = viewer.NotifySoundsPlayed;
+            viewer.Seek(0);
+            viewer.Resume();
+            await Task.Delay(TimeSpan.FromSeconds(seconds));
+            viewer.Pause();
+            Console.WriteLine($"played {seconds:0.#}s -> t={viewer.AnimationTime:0.00}s, {viewer.NotifySoundsPlayed - before} notify sound(s) played");
             continue;
         }
 

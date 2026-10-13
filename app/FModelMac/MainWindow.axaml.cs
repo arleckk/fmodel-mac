@@ -285,7 +285,7 @@ public partial class MainWindow : Window
     {
         if (_viewer is not { IsVisible: true })
         {
-            _viewer = new ModelViewerWindow { Settings = Vm.Settings };
+            _viewer = new ModelViewerWindow { Settings = Vm.Settings, AnimationSource = Vm };
             _viewer.Show();
         }
         _viewer.Activate();

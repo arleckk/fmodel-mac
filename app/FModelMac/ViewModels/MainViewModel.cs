@@ -26,7 +26,7 @@ using Serilog;
 
 namespace FModelMac.ViewModels;
 
-public sealed partial class MainViewModel : ObservableObject
+public sealed partial class MainViewModel : ObservableObject, IAnimationSource
 {
     private const int MaxTabs = 20;
 
@@ -37,6 +37,8 @@ public sealed partial class MainViewModel : ObservableObject
 
     private GameArchive? _archive;
     private SoundExtractor? _sounds;
+    private AnimationLibrary? _animations;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Task<PcmAudio?>> _notifySounds = new(StringComparer.OrdinalIgnoreCase);
 
     public AppSettings Settings { get; } = AppSettings.Load();
     public string Version { get; } = typeof(MainViewModel).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
@@ -200,6 +202,7 @@ public sealed partial class MainViewModel : ObservableObject
             _archive = await Task.Run(() => GameArchive.Load(options, progress));
             ApplyReadOptions();
             _sounds = new SoundExtractor(_archive.Provider, Settings.ArchiveDir!);
+            _animations = new AnimationLibrary(_archive);
 
             foreach (var archive in _archive.Archives)
                 Archives.Add(new ArchiveItem(archive));
@@ -207,6 +210,8 @@ public sealed partial class MainViewModel : ObservableObject
             var total = _archive.Archives.Count;
             Log(LogKind.Information, $"{_archive.ProjectName} ({game}) | Mounted: {_archive.MountedCount}/{total} | " +
                                      $"Files: x{_archive.Provider.Files.Count:N0} | {_archive.LoadTime.TotalSeconds:F2}s");
+            if (_archive.VirtualPathCount > 0) Log(LogKind.Information, $"{_archive.VirtualPathCount} virtual paths loaded");
+            else Log(LogKind.Warning, "Could not load virtual paths, plugin manifest may not exist");
             if (_archive.LockedCount > 0)
                 Log(LogKind.Warning, $"{_archive.LockedCount} archive(s) need an AES key, see Directory > AES");
             if (total == 0)
@@ -364,6 +369,8 @@ public sealed partial class MainViewModel : ObservableObject
         OnSelectedFolderChanged();
         _archive?.Dispose();
         _archive = null;
+        _animations = null;
+        _notifySounds.Clear();
         StatusExtra = "";
     }
 
@@ -896,9 +903,7 @@ public sealed partial class MainViewModel : ObservableObject
         SetStatus(StatusKind.Loading, $"Decoding {asset.Name}");
         try
         {
-            IViewerMotion animation = await Task.Run<IViewerMotion>(() => asset is UBlendSpaceBase blendSpace
-                ? ViewerBlendSpace.FromExport(blendSpace)
-                : ViewerAnimation.FromExport(asset));
+            var animation = await Task.Run(() => DecodeMotion(asset));
             if (AnimationReady(animation) is { } error)
             {
                 Log(LogKind.Warning, error);
@@ -915,6 +920,68 @@ public sealed partial class MainViewModel : ObservableObject
             Serilog.Log.Error(e, "Could not play {Animation} in the 3D viewer", asset.GetPathName());
             Log(LogKind.Error, $"3D viewer: {e.Message}");
             SetStatus(StatusKind.Failed, "Failed");
+        }
+    }
+
+    private IViewerMotion DecodeMotion(UAnimationAsset asset) => asset is UBlendSpaceBase blendSpace
+        ? ViewerBlendSpace.FromExport(blendSpace)
+        : ViewerAnimation.FromExport(asset, _animations is { } library ? library.SoundByName : null);
+
+    // ---------- The 3D viewer's animation list and notifies ----------
+
+    /// <summary>
+    /// The animations made for a skinned model's skeleton (see <see cref="AnimationLibrary"/>), on a worker thread;
+    /// <paramref name="partial"/> may get a first answer (from the worker thread) while a pak game's index is built.
+    /// </summary>
+    public Task<IReadOnlyList<AnimationEntry>> FindAnimationsAsync(ViewerModel model, Action<IReadOnlyList<AnimationEntry>>? partial,
+        IProgress<double>? indexProgress, CancellationToken ct)
+    {
+        if (_animations is not { } library || model.SkeletonPath is null) return Task.FromResult<IReadOnlyList<AnimationEntry>>([]);
+        var skeletons = new[] { model.SkeletonPath }.Concat(model.CompatibleSkeletons).ToArray();
+        return Task.Run(() => library.Find(skeletons, partial, indexProgress, ct), ct);
+    }
+
+    /// <summary>Decodes an animation, montage, composite or blend space for the viewer, with its notifies.</summary>
+    public Task<IViewerMotion> LoadMotionAsync(GameFile file)
+    {
+        var archive = _archive ?? throw new InvalidOperationException("No game is loaded");
+        return Task.Run(() =>
+        {
+            var asset = AssetPreview.LoadExports(archive.Provider, file).OfType<UAnimationAsset>()
+                            .FirstOrDefault(a => a is UAnimSequence or UAnimMontage or UAnimComposite or UBlendSpaceBase)
+                        ?? throw new InvalidOperationException($"{file.Name} has no animation");
+            return DecodeMotion(asset);
+        });
+    }
+
+    /// <summary>The sound a notify plays (a sound wave, cue, Wwise event…), decoded once and kept; null when it can't be.</summary>
+    public Task<PcmAudio?> DecodeNotifySoundAsync(string path) => _notifySounds.GetOrAdd(path, p => Task.Run(() => DecodeNotifySound(p)));
+
+    private PcmAudio? DecodeNotifySound(string path)
+    {
+        if (_archive is not { } archive || _sounds is not { } extractor || _animations is not { } library) return null;
+        try
+        {
+            if (library.PackageOf(path) is not { } file) return null;
+            var exports = AssetPreview.LoadExports(archive.Provider, file);
+            List<ExtractedSound> sounds;
+            lock (extractor) sounds = extractor.FromExports(file, exports);
+            // A sound cue holds no audio: play the first wave it references
+            if (sounds.Count == 0)
+            {
+                foreach (var wave in exports.SelectMany(e => NotifyReader.References(e, c => c.StartsWith("SoundWave", StringComparison.Ordinal))))
+                {
+                    if (library.PackageOf(wave.GetPathName()) is not { } waveFile) continue;
+                    lock (extractor) sounds = extractor.FromExports(waveFile, AssetPreview.LoadExports(archive.Provider, waveFile));
+                    if (sounds.Count > 0) break;
+                }
+            }
+            return sounds.FirstOrDefault() is { } sound ? AudioDecoder.Decode(sound.Data, sound.Extension, Settings.CriwareKeyValue) : null;
+        }
+        catch (Exception e)
+        {
+            Serilog.Log.Warning(e, "Could not decode the notify sound {Sound}", path);
+            return null;
         }
     }
 
