@@ -37,13 +37,29 @@ layout and features as closely as macOS allows.
 The full list, with the design decisions and how each part was verified, is in
 [`app/README.md`](app/README.md).
 
-## Requirements
+## Download
 
-- A Mac with Apple Silicon (arm64).
-- To build: the [.NET 10 SDK](https://dotnet.microsoft.com/download), Xcode command line tools
+Get `FModel-<version>-macos-arm64.zip` from [Releases](https://github.com/arleckk/fmodel-mac/releases), unzip it
+and move `FModel.app` to Applications. It needs a Mac with Apple Silicon and macOS 14 Sonoma or later; nothing else
+to install.
+
+### Opening it the first time
+
+FModel isn't notarized by Apple (that takes a paid developer account), so macOS blocks it the first time:
+
+1. Open FModel. macOS says it can't verify the app: click **Done** (or **OK**), not Move to Trash.
+2. Open **System Settings › Privacy & Security**, scroll down to **Security** and click **Open Anyway** next to
+   the message about FModel.
+3. Open FModel again and choose **Open Anyway**; macOS asks for your password or Touch ID.
+
+From then on it opens normally, and so does the `fmodel` command line. If you prefer the Terminal, this does the
+same: `xattr -dr com.apple.quarantine /Applications/FModel.app`.
+
+## Requirements to build
+
+- A Mac with Apple Silicon (arm64) and macOS 14 or later.
+- The [.NET 10 SDK](https://dotnet.microsoft.com/download), Xcode command line tools
   (`xcode-select --install`), `git` and `cmake` (CUE4Parse's native library is built with it).
-
-There are no prebuilt downloads yet: build it from source as below.
 
 ## Building
 
@@ -57,8 +73,8 @@ app/packaging/build-app.sh
 `setup-upstream.sh` fetches the pinned FModel and CUE4Parse sources into `upstream/` (not tracked)
 and applies `patches/CUE4Parse.patch`; `--with-vgmstream` also builds vgmstream for the audio player.
 `build-app.sh` produces `app/dist/FModel.app`. `app/packaging/build-unluac.sh` optionally adds the Lua
-decompiler. The app is signed ad hoc, so the first time macOS may ask you to confirm opening it
-(right-click › Open, or System Settings › Privacy & Security).
+decompiler. The app is signed ad hoc; a build made on your own Mac opens without the Gatekeeper prompt, since
+only downloaded files are checked.
 
 Oodle-compressed games need nothing extra: CUE4Parse decompresses Oodle with
 [OodleSharp](https://github.com/NotOfficer/OodleSharp) (managed code, MIT), and no Oodle library from
@@ -72,7 +88,7 @@ The app's executable is also a command-line tool. Put its `fmodel` link on your 
 echo 'export PATH="/Applications/FModel.app/Contents/Resources/bin:$PATH"' >> ~/.zprofile
 ```
 
-Open the app once from Finder first, so macOS lets it run. Then:
+If you downloaded the app, open it once from Finder first (see above), so macOS lets it run. Then:
 
 ```bash
 fmodel profiles                                  # the games saved in the app; * is the active one
