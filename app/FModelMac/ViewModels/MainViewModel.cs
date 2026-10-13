@@ -298,6 +298,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void ResetGame()
     {
+        References = null;
         Archives.Clear();
         Packages.Clear();
         Folders.Clear();
@@ -452,18 +453,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         if (_archive is null) return;
 
-        AssetTab tab;
-        if ((newTab && Tabs.Count < MaxTabs) || SelectedTab is null)
-        {
-            tab = new AssetTab();
-            Tabs.Add(tab);
-            SelectedTab = tab;
-        }
-        else
-        {
-            tab = SelectedTab;
-        }
-
+        var tab = TargetTab(newTab);
         tab.Reset(file);
         var cts = tab.Loading = new CancellationTokenSource();
         var provider = _archive.Provider;
@@ -497,6 +487,72 @@ public sealed partial class MainViewModel : ObservableObject
         {
             if (cts.IsCancellationRequested) return;
             Serilog.Log.Error(e, "Failed to extract {Path}", file.Path);
+            Log(LogKind.Error, $"{e.GetType().Name}: {e.Message}");
+            SetStatus(StatusKind.Failed, "Failed");
+        }
+    }
+
+    private AssetTab TargetTab(bool newTab)
+    {
+        if ((!newTab || Tabs.Count >= MaxTabs) && SelectedTab is not null) return SelectedTab;
+        var tab = new AssetTab();
+        Tabs.Add(tab);
+        SelectedTab = tab;
+        return tab;
+    }
+
+    /// <summary>FModel's Show Metadata: the package summary, names, imports and exports in a new tab.</summary>
+    public async Task ShowMetadataAsync(GameFile file)
+    {
+        if (_archive is not { } archive || !file.IsUePackage) return;
+        var tab = TargetTab(newTab: SelectedTab?.Entry is not null);
+        tab.Reset(file);
+        tab.Header = $"{file.Name} (Metadata)";
+        var cts = tab.Loading = new CancellationTokenSource();
+        SetStatus(StatusKind.Loading, $"Reading the metadata of {file.Name}");
+        try
+        {
+            var json = await Task.Run(() => archive.PackageMetadata(file), cts.Token);
+            if (cts.IsCancellationRequested) return;
+            tab.ApplyText(json, "Json");
+            SetStatus(StatusKind.Completed, "Completed");
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception e)
+        {
+            if (cts.IsCancellationRequested) return;
+            Serilog.Log.Error(e, "Failed to read the metadata of {Path}", file.Path);
+            Log(LogKind.Error, $"{e.GetType().Name}: {e.Message}");
+            SetStatus(StatusKind.Failed, "Failed");
+        }
+    }
+
+    /// <summary>The last Find References result, shown in the References tab of the search window.</summary>
+    public PackageReferences? References { get; private set; }
+
+    /// <summary>Raised on the UI thread when Find References has a result.</summary>
+    public event Action<PackageReferences>? ReferencesReady;
+
+    /// <summary>FModel's Find References: the packages that import this one.</summary>
+    public async Task FindReferencesAsync(GameFile file)
+    {
+        if (_archive is not { } archive || !file.IsUePackage) return;
+        var indexing = archive.NeedsReferenceIndex;
+        SetStatus(StatusKind.Loading, indexing ? "Indexing package imports" : $"Finding references to {file.Name}");
+        try
+        {
+            var progress = new Progress<double>(p => StatusLabel = $"Indexing package imports ({p:P0})");
+            var files = await Task.Run(() => archive.FindReferences(file, progress));
+            if (indexing && archive.ReferenceIndexSummary is { } summary) Log(LogKind.Information, summary);
+            References = new PackageReferences(file, files.ToArray());
+            ReferencesReady?.Invoke(References);
+            SetStatus(StatusKind.Completed, "Completed");
+        }
+        catch (Exception e)
+        {
+            Serilog.Log.Error(e, "Failed to find references to {Path}", file.Path);
             Log(LogKind.Error, $"{e.GetType().Name}: {e.Message}");
             SetStatus(StatusKind.Failed, "Failed");
         }
@@ -782,7 +838,12 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     private async Task Copy(string? what)
     {
-        if (SelectedPackage?.File is not { } file || SetClipboardText is null) return;
+        if (SelectedPackage?.File is { } file) await CopyAsync(file, what);
+    }
+
+    public async Task CopyAsync(GameFile file, string? what)
+    {
+        if (SetClipboardText is null) return;
         var text = what switch
         {
             "PackageName" => file.Name,
@@ -826,3 +887,5 @@ public sealed partial class MainViewModel : ObservableObject
         _archive?.Provider.Files.Values.Where(f => !f.IsUePackagePayload).DistinctBy(f => f.Path, StringComparer.OrdinalIgnoreCase)
         ?? [];
 }
+
+public sealed record PackageReferences(GameFile Package, GameFile[] Files);

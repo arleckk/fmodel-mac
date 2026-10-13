@@ -78,5 +78,6 @@ public sealed class AssetItem(GameFile file)
     public string SizeText => AssetPreview.FormatSize(File.Size);
     public string CompressionText => File.CompressionMethod.ToString();
     public bool IsEncrypted => File.IsEncrypted;
+    public bool IsPackage => File.IsUePackage;
     public string ArchiveText => File is VfsEntry entry ? entry.Vfs.Name : "None";
 }

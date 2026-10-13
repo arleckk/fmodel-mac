@@ -37,15 +37,24 @@ Genera `app/dist/FModelMac.app` (~180 MB): publicación autocontenida para `osx-
 Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A2B34`,
 `#32323F`, `#262630`…) y sus acentos (`#206BD4` listo, `#D49220` cargando, `#C22B2B` error).
 
-- **Menú:** Directory (Selector, AES, Archives Info), Packages (Search ⌘⇧F), Views, Settings,
-  Help. Lo que todavía no existe en macOS (Backup, References, Export Session, Image Merger)
-  aparece deshabilitado.
+- **Menú:** Directory (Selector, AES, Archives Info), Packages (Search ⌘⇧F, References ⌘⇧R),
+  Views, Settings, Help. Lo que todavía no existe en macOS (Backup, Favorite Directories,
+  Export Session, Image Merger) aparece deshabilitado.
 - **Panel izquierdo, pestaña Archives:** Loading Mode (Multiple/All) + Load, lista GAME ARCHIVES
   (los bloqueados salen en gris) e INFORMATION del contenedor seleccionado.
 - **Folders:** árbol aplanado y virtualizado con los íconos de carpeta de FModel, contador café de
   paquetes, flecha que rota, "Bring Selected Folder To View" y "Collapse All".
 - **N Packages:** búsqueda, breadcrumb clicable, lista con íconos por tipo y menú contextual
-  (Extract in New Tab, Export › Model/World/Animation/Properties/Texture, Copy › rutas).
+  (Extract in New Tab, Show Metadata, Find References, Export › Model/World/Animation/Properties/
+  Texture, Copy › rutas). Las pestañas de assets tienen su propio menú (Close Tab/All/Other, Show
+  Metadata, Find References).
+- **Show Metadata:** el resumen del paquete, el name map, los imports y los exports en JSON, en una
+  pestaña nueva (como FModel).
+- **Find References / Search For Packages:** la ventana de búsqueda tiene las pestañas By Path y
+  References, cada una con filtro, columna Archive y el mismo menú contextual. FModel sólo encuentra
+  referencias en juegos IoStore (lee el encabezado del contenedor); aquí también funciona con `.pak`:
+  la primera vez se leen los encabezados de todos los paquetes y se arma un índice de imports
+  (38,302 paquetes de FF VII en 0.7 s) que dura hasta que se vuelve a montar el juego.
 - **Visor 3D** (Views › 3D Viewer, o doble clic sobre una malla): mallas estáticas y con
   esqueleto (LOD 0) con su textura difusa, grid, wireframe, esqueleto, visibilidad por material
   y captura PNG. Arrastrar orbita, clic derecho/Shift paneo, scroll o pellizco zoom, WASD/QE
@@ -164,4 +173,6 @@ dotnet run -- --versioning ./out <carpeta Paks> GAME_UE4_25 <AES|->
 dotnet run -- --decode sonido.wav wav salida.f32
 # Imprime el JSON de paquetes (o --scan-morphs para listar mallas con morph targets)
 dotnet run -- --json <carpeta Paks> GAME_UE4_25 <AES|-> Game/Content/.../Paquete.uasset
+# Find References (con el tiempo del índice) y el tamaño de Show Metadata
+dotnet run -- --json <carpeta Paks> GAME_UE4_25 <AES|-> --refs Game/Content/.../Paquete.uasset
 ```

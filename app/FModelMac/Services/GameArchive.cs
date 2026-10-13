@@ -4,11 +4,16 @@ using CUE4Parse.Encryption.Aes;
 using CUE4Parse.FileProvider;
 using CUE4Parse.FileProvider.Objects;
 using CUE4Parse.MappingsProvider.Usmap;
+using CUE4Parse.UE4.Assets;
 using CUE4Parse.UE4.IO;
+using CUE4Parse.UE4.IO.Objects;
 using CUE4Parse.UE4.Localization;
 using CUE4Parse.UE4.Objects.Core.Misc;
+using CUE4Parse.UE4.Readers;
 using CUE4Parse.UE4.Versions;
+using CUE4Parse.Utils;
 using CUE4Parse.UE4.VirtualFileSystem;
+using Newtonsoft.Json;
 using Serilog;
 
 namespace FModelMac.Services;
@@ -215,6 +220,92 @@ public sealed class GameArchive : IDisposable
         Provider.Internationalization.Clear();
         Provider.Internationalization.Override(entries);
         return new LocalizationResult(culture, Provider.Internationalization.Count, available, files.Length > 0);
+    }
+
+    /// <summary>FModel's Show Metadata: the package summary, name map, imports and exports as JSON.</summary>
+    public string PackageMetadata(GameFile file) => JsonConvert.SerializeObject(Provider.LoadPackage(file), Formatting.Indented);
+
+    private readonly Lock _importersLock = new();
+    private Dictionary<string, GameFile[]>? _importers;
+
+    /// <summary>Set once the pak import index has been built.</summary>
+    public string? ReferenceIndexSummary { get; private set; }
+
+    /// <summary>Whether Find References still has to read every package header of a pak game once.</summary>
+    public bool NeedsReferenceIndex => _importers is null && Provider.Files.Values.Any(IsPakPackage);
+
+    /// <summary>
+    /// FModel's Find References: the packages that import this one. FModel only reads IoStore container headers;
+    /// packages in .pak archives (UE4 before IoStore, or mixed games) are covered by an index of every package's
+    /// imports, built once per mount from the package headers alone.
+    /// </summary>
+    public IReadOnlyList<GameFile> FindReferences(GameFile file, IProgress<double>? progress = null, CancellationToken ct = default)
+    {
+        if (!file.IsUePackage) return [];
+        var refs = new HashSet<GameFile>();
+        if (file is FIoStoreEntry) refs.UnionWith(Provider.ScanForPackageRefs(file));
+        if (ImportIndex(progress, ct).TryGetValue(file.PathWithoutExtension, out var importers)) refs.UnionWith(importers);
+        // The same package can sit in several containers: list the copy the provider uses, once
+        return refs.Select(f => Provider.Files.TryGetValue(f.Path, out var used) ? used : f)
+            .Where(f => !f.Path.Equals(file.Path, StringComparison.OrdinalIgnoreCase))
+            .DistinctBy(f => f.Path, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(f => f.Path, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private static bool IsPakPackage(GameFile file) => file is not FIoStoreEntry && file.IsUePackage;
+
+    private Dictionary<string, GameFile[]> ImportIndex(IProgress<double>? progress, CancellationToken ct)
+    {
+        lock (_importersLock)
+        {
+            if (_importers is not null) return _importers;
+
+            var sw = Stopwatch.StartNew();
+            var packages = Provider.Files.Values.Where(IsPakPackage).ToArray();
+            var imports = new (GameFile File, string[] Packages)[packages.Length];
+            int done = 0, failed = 0;
+            Parallel.For(0, packages.Length, new ParallelOptions { CancellationToken = ct }, i =>
+            {
+                try
+                {
+                    if (packages[i].TryCreateReader(out var archive))
+                    {
+                        using (archive)
+                        {
+                            // Header only: the summary, names, imports and exports live in the .uasset
+                            var package = new Package(archive, null, ubulk: (FArchive?) null, provider: Provider);
+                            imports[i] = (packages[i], package.ImportMap
+                                .Where(import => import.ClassName.Text == "Package")
+                                .Select(import => import.ObjectName.Text).ToArray());
+                        }
+                    }
+                }
+                catch (Exception)
+                {
+                    Interlocked.Increment(ref failed);
+                }
+                var count = Interlocked.Increment(ref done);
+                if (count % 500 == 0) progress?.Report((double) count / packages.Length);
+            });
+
+            var paths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var index = new Dictionary<string, List<GameFile>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (importer, names) in imports)
+            {
+                if (importer is null) continue;
+                foreach (var name in names)
+                {
+                    if (name.Length < 2 || name[0] != '/') continue; // script packages (/Script/Engine) have no file
+                    if (!paths.TryGetValue(name, out var path)) paths[name] = path = Provider.FixPath(name).SubstringBeforeLast('.');
+                    if (!index.TryGetValue(path, out var list)) index[path] = list = [];
+                    list.Add(importer);
+                }
+            }
+            ReferenceIndexSummary = $"Indexed the imports of {packages.Length:N0} packages in {sw.Elapsed.TotalSeconds:F2}s" +
+                                    (failed > 0 ? $" ({failed:N0} unreadable)" : "");
+            Log.Information(ReferenceIndexSummary);
+            return _importers = index.ToDictionary(e => e.Key, e => e.Value.ToArray(), StringComparer.OrdinalIgnoreCase);
+        }
     }
 
     public void Dispose() => Provider.Dispose();

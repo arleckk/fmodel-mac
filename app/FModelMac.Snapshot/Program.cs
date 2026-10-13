@@ -295,6 +295,22 @@ if (args is ["--json", var jsonPaks, var jsonGame, var jsonAes, ..])
         return;
     }
 
+    // "--json ... --refs <package...>" prints Find References (and times the pak import index) plus the metadata size
+    if (args[4..] is ["--refs", .. var refTargets])
+    {
+        foreach (var target in refTargets)
+        {
+            var file = jsonProvider[target];
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var refs = vm.Archive.FindReferences(file, new Progress<double>(p => Console.WriteLine($"  index {p:P0}")));
+            Console.WriteLine($"{file.Path}: {refs.Count} references in {sw.Elapsed.TotalSeconds:F2}s | {vm.Archive.ReferenceIndexSummary}");
+            foreach (var r in refs.Take(15)) Console.WriteLine($"  <- {r.Path}");
+            var metadata = vm.Archive.PackageMetadata(file);
+            Console.WriteLine($"  metadata: {metadata.Length:N0} chars, {metadata.Split('\n').Length:N0} lines");
+        }
+        return;
+    }
+
     // "--json ... --scan-morphs" lists skeletal meshes that have morph targets
     if (args[4..] is ["--scan-morphs"])
     {
@@ -638,6 +654,21 @@ async Task RunAsync()
     await Task.Delay(400);
     Save(search, "7-search.png");
     search.Close();
+
+    // Show Metadata in a new tab, then Find References into the search window's References tab
+    var skeleton = vm.AllFiles().FirstOrDefault(f => f.Name == "SKEL_Fixture.uasset") ?? vm.AllFiles().First(f => f.IsUePackage);
+    await vm.ShowMetadataAsync(skeleton);
+    Console.WriteLine($"Metadata: tab '{vm.SelectedTab?.Header}' {vm.SelectedTab?.Document.LineCount} lines | {vm.StatusText}");
+    Save(window, "8-metadata.png");
+    var references = new SearchWindow(vm);
+    vm.ReferencesReady += refs => references.ShowReferences(refs);
+    references.Show();
+    await vm.FindReferencesAsync(skeleton);
+    references.FocusTab(SearchTab.References);
+    await Task.Delay(400);
+    Console.WriteLine($"References: {vm.References?.Files.Length} files of '{vm.References?.Package.Name}' | {vm.StatusText}");
+    Save(references, "9-references.png");
+    references.Close();
 
     window.Close();
 }

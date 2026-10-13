@@ -5,6 +5,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using CUE4Parse.FileProvider.Objects;
 using FModelMac.Rendering;
 using FModelMac.Services.Audio;
 using FModelMac.ViewModels;
@@ -40,6 +41,7 @@ public partial class MainWindow : Window
             _vm.ModelReady -= OnModelReady;
             _vm.MapReady -= OnMapReady;
             _vm.SoundsReady -= OnSoundsReady;
+            _vm.ReferencesReady -= OnReferencesReady;
             _vm.AnimationReady = null;
         }
 
@@ -52,6 +54,7 @@ public partial class MainWindow : Window
         _vm.ModelReady += OnModelReady;
         _vm.MapReady += OnMapReady;
         _vm.SoundsReady += OnSoundsReady;
+        _vm.ReferencesReady += OnReferencesReady;
         _vm.AnimationReady = animation => _viewer is { IsVisible: true } viewer
             ? viewer.PlayAnimation(animation)
             : "Open a skeletal mesh in the 3D viewer first, then double-click the animation";
@@ -154,15 +157,25 @@ public partial class MainWindow : Window
 
     private SearchWindow? _search;
 
-    private void OnSearchClick(object? sender, RoutedEventArgs e)
+    private void OnSearchClick(object? sender, RoutedEventArgs e) => ShowSearch(SearchTab.ByPath);
+
+    private void OnReferencesClick(object? sender, RoutedEventArgs e) => ShowSearch(SearchTab.References);
+
+    public SearchWindow ShowSearch(SearchTab tab)
     {
-        if (_search is { IsVisible: true })
+        if (_search is not { IsVisible: true })
         {
-            _search.Activate();
-            return;
+            _search = new SearchWindow(Vm);
+            _search.Show(this);
         }
-        _search = new SearchWindow(Vm);
-        _search.Show(this);
+        _search.FocusTab(tab);
+        return _search;
+    }
+
+    private void OnReferencesReady(PackageReferences references)
+    {
+        if (_search is { IsVisible: true } search) search.ShowReferences(references);
+        ShowSearch(SearchTab.References);
     }
 
     private async void OnSettingsClick(object? sender, RoutedEventArgs e)
@@ -307,7 +320,45 @@ public partial class MainWindow : Window
             await Vm.ExtractAsync(item.File, newTab: true);
     }
 
+    private GameFile? SelectedPackageFile => (PackagesList.SelectedItem as AssetItem)?.File ?? Vm.SelectedPackage?.File;
+
+    private async void OnShowMetadataClick(object? sender, RoutedEventArgs e)
+    {
+        foreach (var item in PackagesList.SelectedItems?.OfType<AssetItem>().Where(i => i.IsPackage).ToArray() ?? [])
+            await Vm.ShowMetadataAsync(item.File);
+    }
+
+    private async void OnFindReferencesClick(object? sender, RoutedEventArgs e)
+    {
+        if (SelectedPackageFile is { } file) await Vm.FindReferencesAsync(file);
+    }
+
     // ---------- Tabs ----------
+
+    private static AssetTab? MenuTab(object? sender) => (sender as MenuItem)?.DataContext as AssetTab;
+
+    private void OnCloseTabClick(object? sender, RoutedEventArgs e) => Vm.CloseTabCommand.Execute(MenuTab(sender));
+
+    private void OnCloseOtherTabsClick(object? sender, RoutedEventArgs e)
+    {
+        if (MenuTab(sender) is not { } keep) return;
+        foreach (var tab in Vm.Tabs.Where(t => t != keep).ToArray()) Vm.CloseTabCommand.Execute(tab);
+    }
+
+    private void OnCloseAllTabsClick(object? sender, RoutedEventArgs e)
+    {
+        foreach (var tab in Vm.Tabs.ToArray()) Vm.CloseTabCommand.Execute(tab);
+    }
+
+    private async void OnTabShowMetadataClick(object? sender, RoutedEventArgs e)
+    {
+        if (MenuTab(sender)?.Entry is { } file) await Vm.ShowMetadataAsync(file);
+    }
+
+    private async void OnTabFindReferencesClick(object? sender, RoutedEventArgs e)
+    {
+        if (MenuTab(sender)?.Entry is { } file) await Vm.FindReferencesAsync(file);
+    }
 
     private void OnTabsHeaderPointerReleased(object? sender, PointerReleasedEventArgs e)
     {

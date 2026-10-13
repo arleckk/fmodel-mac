@@ -73,7 +73,7 @@
                 <MenuItem Header="Search" InputGesture="Cmd+Shift+F" HotKey="Cmd+Shift+F" Click="OnSearchClick" IsEnabled="{Binding IsReady}">
                     <MenuItem.Icon><c:Glyph Data="{StaticResource SearchIcon}" /></MenuItem.Icon>
                 </MenuItem>
-                <MenuItem Header="References" IsEnabled="False">
+                <MenuItem Header="References" InputGesture="Cmd+Shift+R" HotKey="Cmd+Shift+R" Click="OnReferencesClick" IsEnabled="{Binding IsReady}">
                     <MenuItem.Icon><c:Glyph Data="{StaticResource SearchIcon}" /></MenuItem.Icon>
                 </MenuItem>
                 <MenuItem Header="Favorite Directories" IsEnabled="False">
@@ -270,10 +270,12 @@
                                         <MenuItem Header="Extract in New Tab" Click="OnExtractNewTabClick">
                                             <MenuItem.Icon><c:Glyph Data="{StaticResource ExtractIcon}" /></MenuItem.Icon>
                                         </MenuItem>
-                                        <MenuItem Header="Show Metadata" IsEnabled="False">
+                                        <MenuItem Header="Show Metadata" Click="OnShowMetadataClick"
+                                                  IsEnabled="{Binding SelectedPackage.IsPackage, FallbackValue=False}">
                                             <MenuItem.Icon><c:Glyph Data="{StaticResource InfoIcon}" /></MenuItem.Icon>
                                         </MenuItem>
-                                        <MenuItem Header="Find References" IsEnabled="False">
+                                        <MenuItem Header="Find References" Click="OnFindReferencesClick"
+                                                  IsEnabled="{Binding SelectedPackage.IsPackage, FallbackValue=False}">
                                             <MenuItem.Icon><c:Glyph Data="{StaticResource SearchIcon}" /></MenuItem.Icon>
                                         </MenuItem>
                                         <MenuItem Header="Decompile Blueprint" IsEnabled="False">
@@ -349,7 +351,29 @@
                                 </ListBox.ItemsPanel>
                                 <ListBox.ItemTemplate>
                                     <DataTemplate x:DataType="vm:AssetTab">
-                                        <DockPanel Width="180" ToolTip.Tip="{Binding Header}">
+                                        <DockPanel Width="180" ToolTip.Tip="{Binding Header}" Background="Transparent">
+                                            <DockPanel.ContextMenu>
+                                                <ContextMenu>
+                                                    <MenuItem Header="Close Tab" Click="OnCloseTabClick">
+                                                        <MenuItem.Icon><c:Glyph Data="{StaticResource RemoveIcon}" /></MenuItem.Icon>
+                                                    </MenuItem>
+                                                    <MenuItem Header="Close All Tabs" Click="OnCloseAllTabsClick">
+                                                        <MenuItem.Icon><c:Glyph Data="{StaticResource RemoveIcon}" /></MenuItem.Icon>
+                                                    </MenuItem>
+                                                    <MenuItem Header="Close Other Tabs" Click="OnCloseOtherTabsClick">
+                                                        <MenuItem.Icon><c:Glyph Data="{StaticResource RemoveIcon}" /></MenuItem.Icon>
+                                                    </MenuItem>
+                                                    <Separator />
+                                                    <MenuItem Header="Show Metadata" Click="OnTabShowMetadataClick"
+                                                              IsEnabled="{Binding Entry.IsUePackage, FallbackValue=False}">
+                                                        <MenuItem.Icon><c:Glyph Data="{StaticResource InfoIcon}" /></MenuItem.Icon>
+                                                    </MenuItem>
+                                                    <MenuItem Header="Find References" Click="OnTabFindReferencesClick"
+                                                              IsEnabled="{Binding Entry.IsUePackage, FallbackValue=False}">
+                                                        <MenuItem.Icon><c:Glyph Data="{StaticResource SearchIcon}" /></MenuItem.Icon>
+                                                    </MenuItem>
+                                                </ContextMenu>
+                                            </DockPanel.ContextMenu>
                                             <Button DockPanel.Dock="Right" Classes="tabclose" Margin="10,0,0,0" ToolTip.Tip="Close Tab"
                                                     Command="{Binding $parent[ListBox].((vm:MainViewModel)DataContext).CloseTabCommand}"
                                                     CommandParameter="{Binding}" />

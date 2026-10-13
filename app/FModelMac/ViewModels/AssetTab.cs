@@ -44,6 +44,12 @@ public sealed partial class AssetTab : ObservableObject
         SetImage(image, result.ImageName);
     }
 
+    public void ApplyText(string text, string highlight)
+    {
+        Highlighting = AppResources.Highlighting(highlight);
+        Document = new TextDocument(text);
+    }
+
     private void SetImage(Bitmap? image, string? name)
     {
         var old = Image;

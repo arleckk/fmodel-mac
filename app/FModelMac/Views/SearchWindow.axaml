@@ -1,62 +1,24 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:c="using:FModelMac.Controls"
         xmlns:v="using:FModelMac.Views"
         x:Class="FModelMac.Views.SearchWindow"
-        Title="Search"
-        Width="900" Height="640" MinWidth="500" MinHeight="300"
+        Title="Search For Packages"
+        Width="1000" Height="640" MinWidth="560" MinHeight="300"
         WindowStartupLocation="CenterOwner">
-    <Border Background="{StaticResource Layer2BackgroundBrush}" Margin="10" Padding="8">
-        <DockPanel>
-            <Grid DockPanel.Dock="Top" ColumnDefinitions="*,5,Auto,Auto">
-                <c:SearchTextBox x:Name="Query" Watermark="Search by path..." />
-                <ToggleButton x:Name="MatchCase" Grid.Column="2" Padding="5" ToolTip.Tip="Match Case"
-                              IsCheckedChanged="OnOptionChanged">
-                    <c:Glyph Data="{StaticResource MatchCaseIcon}" />
-                </ToggleButton>
-                <ToggleButton x:Name="UseRegex" Grid.Column="3" Padding="5" ToolTip.Tip="Regex"
-                              IsCheckedChanged="OnOptionChanged">
-                    <c:Glyph Data="{StaticResource RegexIcon}" />
-                </ToggleButton>
-            </Grid>
-
-            <TextBlock DockPanel.Dock="Bottom" x:Name="Summary" Classes="dim" Margin="0,6,0,0" />
-
-            <!-- Column headers -->
-            <Grid DockPanel.Dock="Top" ColumnDefinitions="*,90" Margin="5,8,5,2">
-                <TextBlock Text="Path" FontWeight="SemiBold" />
-                <TextBlock Grid.Column="1" Text="Size" FontWeight="SemiBold" HorizontalAlignment="Right" />
-            </Grid>
-
-            <Panel>
-                <ListBox x:Name="Results" DoubleTapped="OnResultDoubleTapped" KeyDown="OnResultKeyDown">
-                    <ListBox.ContextMenu>
-                        <ContextMenu>
-                            <MenuItem Header="Extract in New Tab" Click="OnExtractNewTabClick">
-                                <MenuItem.Icon><c:Glyph Data="{StaticResource ExtractIcon}" /></MenuItem.Icon>
-                            </MenuItem>
-                            <MenuItem Header="Go To" Click="OnGoToClick">
-                                <MenuItem.Icon><c:Glyph Data="{StaticResource GoToIcon}" /></MenuItem.Icon>
-                            </MenuItem>
-                            <MenuItem Header="Copy">
-                                <MenuItem.Icon><c:Glyph Data="{StaticResource CopyIcon}" /></MenuItem.Icon>
-                                <MenuItem Header="Package Path" Click="OnCopyPathClick" />
-                            </MenuItem>
-                        </ContextMenu>
-                    </ListBox.ContextMenu>
-                    <ListBox.ItemTemplate>
-                        <DataTemplate x:DataType="v:SearchResult">
-                            <Grid ColumnDefinitions="*,90">
-                                <TextBlock Text="{Binding Path}" TextTrimming="LeadingCharacterEllipsis" />
-                                <TextBlock Grid.Column="1" Text="{Binding Size}" HorizontalAlignment="Right" />
-                            </Grid>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
-                <TextBlock x:Name="Empty" Text="No packages found matching the query" FontWeight="SemiBold"
-                           HorizontalAlignment="Center" Margin="0,20,0,0"
-                           Foreground="{StaticResource AdonisErrorBrush}" IsVisible="False" />
-            </Panel>
-        </DockPanel>
-    </Border>
+    <TabControl x:Name="Tabs" Classes="fill" Margin="10" SelectionChanged="OnTabChanged">
+        <TabItem Header="By Path">
+            <Border Background="{StaticResource Layer2BackgroundBrush}" Padding="8">
+                <v:FileSearchPanel x:Name="PathPanel" />
+            </Border>
+        </TabItem>
+        <TabItem x:Name="ReferencesTab" Header="References">
+            <Border Background="{StaticResource Layer2BackgroundBrush}" Padding="8">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" x:Name="ReferencesText" Classes="dim" Margin="0,0,0,8"
+                               TextTrimming="LeadingCharacterEllipsis" />
+                    <v:FileSearchPanel x:Name="ReferencesPanel" EmptyText="No references found in other packages" />
+                </DockPanel>
+            </Border>
+        </TabItem>
+    </TabControl>
 </Window>
