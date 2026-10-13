@@ -161,6 +161,17 @@ public partial class AssetExplorer : UserControl
         if (entry is ExplorerFolder folder)
         {
             menu.Items.Add(Item("Open", "FolderIcon", async () => await OpenAsync(folder)));
+            var exportFolder = Item("Export Folder", "ExportIcon", null);
+            foreach (var (header, icon, kind) in new[]
+                     {
+                         ("Raw Data (.uasset)", "AssetIcon", FolderExport.RawData), ("Properties (.json)", "JsonIcon", FolderExport.Properties),
+                         ("Textures", "TextureIcon", FolderExport.Textures), ("Decompiled Blueprints", "CodeIcon", FolderExport.Code),
+                         ("Models", "ModelIcon", FolderExport.Models), ("Worlds", "WorldIcon", FolderExport.Worlds),
+                         ("Animations", "AnimationIcon", FolderExport.Animations), ("Audio", "AudioIcon", FolderExport.Audio)
+                     })
+                exportFolder.Items.Add(Item(header, icon, async () => await vm.ExportFolderAsync(folder.Node, kind)));
+            menu.Items.Add(exportFolder);
+            menu.Items.Add(new Separator());
             menu.Items.Add(Item("Copy Directory Path", "CopyIcon", async () =>
             {
                 if (vm.SetClipboardText is { } copy) await copy(folder.Node.FullPath);

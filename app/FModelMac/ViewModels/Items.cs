@@ -81,3 +81,7 @@ public sealed class AssetItem(GameFile file)
     public bool IsPackage => File.IsUePackage;
     public string ArchiveText => File is VfsEntry entry ? entry.Vfs.Name : "None";
 }
+
+/// <summary>What Export Folder saves (FModel's folder context menu).</summary>
+public enum FolderExport { RawData, Properties, Textures, Code, Models, Worlds, Animations, Audio }
+

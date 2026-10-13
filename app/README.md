@@ -60,8 +60,15 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
   carpeta del juego, como en FModel: Add Directory… y, por cada uno, Go To / Edit Directory… /
   Delete Directory. Go To carga los archives si hace falta y abre la carpeta en Folders. Al montar
   un juego por primera vez se agregan los presets de FModel (Fortnite, VALORANT, Dead by Daylight).
-  El árbol de Folders tiene menú contextual con "Favorite Directory" y "Copy Directory Path"; el
-  diálogo avisa si la carpeta no existe en el juego cargado.
+  El árbol de Folders tiene menú contextual con "Export Folder", "Favorite Directory" y "Copy
+  Directory Path"; el diálogo avisa si la carpeta no existe en el juego cargado.
+- **Export Folder** (clic derecho en una carpeta del árbol o del explorador, o un atajo de exportación
+  con el foco en el árbol): Raw Data, Properties, Textures, Decompiled Blueprints, Models, Worlds,
+  Animations o Audio de todos los archivos de la carpeta y sus subcarpetas, como FModel. Texturas,
+  modelos, mundos, animaciones y raw data pasan por la Export Session; los paquetes se leen en
+  paralelo y uno ilegible se salta. Con muchos archivos la consola muestra un resumen (cuántos se
+  guardaron, cuántos no tenían nada, los primeros errores) y la barra de estado el avance. **Esc**
+  cancela (también la Export Session en curso). DSR: 1,095 Properties en 4.6 s, 104 texturas en 4.8 s.
 - **Panel izquierdo, pestaña Archives:** Loading Mode (Multiple/All) + Load, lista GAME ARCHIVES
   (los bloqueados salen en gris) e INFORMATION del contenedor seleccionado.
 - **Folders:** árbol aplanado y virtualizado con los íconos de carpeta de FModel, contador café de

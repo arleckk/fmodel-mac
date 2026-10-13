@@ -5,6 +5,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using CUE4Parse.FileProvider.Objects;
 using FModelMac.Rendering;
 using FModelMac.Services;
@@ -345,6 +346,12 @@ public partial class MainWindow : Window
         if (Vm.SelectedFolder is { } folder) Vm.AddFavorite(new FavoriteDirectory(folder.Name, folder.FullPath));
     }
 
+    private async void OnExportFolderClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem { Tag: string tag } && Enum.TryParse<FolderExport>(tag, out var kind) && Vm.SelectedFolder is { } folder)
+            await Vm.ExportFolderAsync(folder, kind);
+    }
+
     private async void OnCopyFolderPathClick(object? sender, RoutedEventArgs e)
     {
         if (Vm.SelectedFolder is { } folder && Clipboard is { } clipboard) await clipboard.SetTextAsync(folder.FullPath);
@@ -537,6 +544,13 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
+        // FModel's Escape: stops a folder export or the Export Session
+        if (e.Key == Key.Escape && e.KeyModifiers == KeyModifiers.None && _vm.CanCancel)
+        {
+            _vm.CancelOperation();
+            e.Handled = true;
+            return;
+        }
         if (e.Source is TextBox { IsReadOnly: false }) return;
         var hotkeys = _vm.Settings.Hotkeys;
 
@@ -558,10 +572,20 @@ public partial class MainWindow : Window
         else if (ExportHotkey(hotkeys, e) is { } export)
         {
             e.Handled = true;
-            // FModel exports what's selected in the focused list: the explorer's tiles, or the packages
+            // FModel exports what's selected in the focused list: the folder tree's folder, the explorer's tiles (its
+            // folders whole), or the packages
             if (!_vm.IsReady) return;
-            if (_vm.IsExplorerVisible && _vm.Explorer.SelectedFiles.Select(f => f.Item).ToArray() is { Length: > 0 } tiles)
-                await export.ExecuteAsync(tiles);
+            var kind = FolderExportOf(export);
+            var focused = FocusManager?.GetFocusedElement() as Visual;
+            if (focused is not null && (focused == FolderList || focused.FindAncestorOfType<ListBox>() == FolderList) && _vm.SelectedFolder is { } folder)
+            {
+                await _vm.ExportFolderAsync(folder, kind);
+            }
+            else if (_vm.IsExplorerVisible && _vm.Explorer.SelectedEntries.Any())
+            {
+                if (_vm.Explorer.SelectedFiles.Select(f => f.Item).ToArray() is { Length: > 0 } tiles) await export.ExecuteAsync(tiles);
+                foreach (var tile in _vm.Explorer.SelectedEntries.OfType<ExplorerFolder>().ToList()) await _vm.ExportFolderAsync(tile.Node, kind);
+            }
             else if (_vm.SelectedLeftTab == 2 && PackagesList.SelectedItems is { Count: > 0 } selected)
                 await export.ExecuteAsync(selected.Cast<object>().ToArray());
             return;
@@ -604,6 +628,19 @@ public partial class MainWindow : Window
         return null;
     }
 
+    private FolderExport FolderExportOf(CommunityToolkit.Mvvm.Input.IAsyncRelayCommand<System.Collections.IList?> command)
+    {
+        var vm = Vm;
+        if (command == vm.ExportRawDataCommand) return FolderExport.RawData;
+        if (command == vm.ExportPropertiesCommand) return FolderExport.Properties;
+        if (command == vm.ExportTextureCommand) return FolderExport.Textures;
+        if (command == vm.ExportModelCommand) return FolderExport.Models;
+        if (command == vm.ExportWorldCommand) return FolderExport.Worlds;
+        if (command == vm.ExportAnimationCommand) return FolderExport.Animations;
+        if (command == vm.ExportCodeCommand) return FolderExport.Code;
+        return FolderExport.Audio;
+    }
+
     private void SwitchTab(int step)
     {
         var index = Vm.SelectedTab is { } tab ? Vm.Tabs.IndexOf(tab) : 0;
@@ -625,6 +662,14 @@ public partial class MainWindow : Window
         ExportAnimationsItem.InputGesture = Gesture(hotkeys.ExportAnimations);
         ExportAudioItem.InputGesture = Gesture(hotkeys.ExportAudio);
         ExportCodeItem.InputGesture = Gesture(hotkeys.ExportCode);
+        FolderExportDataItem.InputGesture = Gesture(hotkeys.ExportData);
+        FolderExportPropertiesItem.InputGesture = Gesture(hotkeys.ExportProperties);
+        FolderExportTexturesItem.InputGesture = Gesture(hotkeys.ExportTextures);
+        FolderExportCodeItem.InputGesture = Gesture(hotkeys.ExportCode);
+        FolderExportModelsItem.InputGesture = Gesture(hotkeys.ExportModels);
+        FolderExportWorldsItem.InputGesture = Gesture(hotkeys.ExportWorlds);
+        FolderExportAnimationsItem.InputGesture = Gesture(hotkeys.ExportAnimations);
+        FolderExportAudioItem.InputGesture = Gesture(hotkeys.ExportAudio);
         ToolTip.SetTip(ExplorerToggle, hotkeys.SwitchAssetExplorer.IsAssigned
             ? $"Switch Asset Explorer ({hotkeys.SwitchAssetExplorer})" : "Switch Asset Explorer");
     }

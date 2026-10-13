@@ -970,10 +970,53 @@ public sealed partial class MainViewModel : ObservableObject
         if (files.Length == 0 && SelectedPackage is { } selected) files = [selected.File];
         if (files.Length == 0 || _archive is null) return;
 
+        // A folder's worth: in parallel, with one summary instead of a line per file
+        var quiet = files.Length > QuietThreshold;
+        var token = BulkToken;
         SetStatus(StatusKind.Loading, $"Exporting {files.Length} {what}");
-        var saved = 0;
+        int saved = 0, empty = 0, failed = 0, done = 0;
+        if (quiet)
+        {
+            var errors = new System.Collections.Concurrent.ConcurrentQueue<string>();
+            string? last = null;
+            try
+            {
+                await Task.Run(() => Parallel.ForEach(files,
+                    new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount / 2), CancellationToken = token }, file =>
+                    {
+                        try
+                        {
+                            var basePath = Settings.ExportPath(file.PathWithoutExtension);
+                            Directory.CreateDirectory(Path.GetDirectoryName(basePath)!);
+                            if (export(file, basePath) is { } target)
+                            {
+                                Interlocked.Increment(ref saved);
+                                last = target;
+                            }
+                            else Interlocked.Increment(ref empty);
+                        }
+                        catch (Exception e)
+                        {
+                            Interlocked.Increment(ref failed);
+                            Serilog.Log.Error(e, "Export failed for {Path}", file.Path);
+                            if (errors.Count < MaxBulkErrors) errors.Enqueue($"{file.Name}: {e.Message}");
+                        }
+                        var n = Interlocked.Increment(ref done);
+                        if (n % 25 == 0) Avalonia.Threading.Dispatcher.UIThread.Post(() => StatusLabel = $"Exporting {what} ({n:N0}/{files.Length:N0})");
+                    }), token);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            foreach (var error in errors) Log(LogKind.Error, error);
+            if (last is not null) LastExportPath = last;
+            LogBulkSummary(saved, what, empty, failed);
+            FinishBulkStatus(saved > 0, token);
+            return;
+        }
         foreach (var file in files)
         {
+            if (token.IsCancellationRequested) break;
             var basePath = Settings.ExportPath(file.PathWithoutExtension);
             try
             {
@@ -997,7 +1040,28 @@ public sealed partial class MainViewModel : ObservableObject
                 Log(LogKind.Error, $"{file.Name}: {e.Message}");
             }
         }
-        SetStatus(saved > 0 ? StatusKind.Completed : StatusKind.Failed, saved > 0 ? "Completed" : "Failed");
+        FinishBulkStatus(saved > 0, token);
+    }
+
+    /// <summary>More files than this (a folder export) are logged as a summary.</summary>
+    private const int QuietThreshold = 10;
+    private const int MaxBulkErrors = 5;
+
+    private void LogBulkSummary(int saved, string what, int empty, int failed)
+    {
+        Log(saved > 0 ? LogKind.Information : LogKind.Warning,
+            $"Saved {saved:N0} {what} to {Settings.ExportsDir}" + (empty > 0 ? $"; {empty:N0} had nothing to export" : ""));
+        if (failed > 0) Log(LogKind.Error, $"{failed:N0} failed" + (failed > MaxBulkErrors ? $" (the first {MaxBulkErrors} are above, the rest in the log file)" : ""));
+    }
+
+    private void FinishBulkStatus(bool any, CancellationToken token)
+    {
+        if (token.IsCancellationRequested)
+        {
+            Log(LogKind.Warning, "Canceled");
+            SetStatus(StatusKind.Failed, "Canceled");
+        }
+        else SetStatus(any ? StatusKind.Completed : StatusKind.Failed, any ? "Completed" : "Failed");
     }
 
     public string? LastExportPath { get; private set; }
@@ -1011,10 +1075,14 @@ public sealed partial class MainViewModel : ObservableObject
         if (files.Length == 0 || _archive is null || _sounds is null) return;
 
         SetStatus(StatusKind.Loading, $"Exporting audio from {files.Length} file(s)");
-        int saved = 0, failed = 0;
+        int saved = 0, failed = 0, empty = 0, done = 0;
+        var quiet = files.Length > QuietThreshold;
+        var token = BulkToken;
         var provider = _archive.Provider;
         foreach (var file in files)
         {
+            if (token.IsCancellationRequested) break;
+            if (quiet && ++done % 25 == 0) StatusLabel = $"Exporting audio ({done:N0}/{files.Length:N0})";
             try
             {
                 var (sounds, warnings) = await Task.Run(() =>
@@ -1027,10 +1095,11 @@ public sealed partial class MainViewModel : ObservableObject
                         return (list, _sounds.Warnings.ToArray());
                     }
                 });
-                foreach (var warning in warnings) Log(LogKind.Warning, warning);
+                if (!quiet) foreach (var warning in warnings) Log(LogKind.Warning, warning);
                 if (sounds.Count == 0)
                 {
-                    if (warnings.Length == 0) Log(LogKind.Warning, $"No audio in '{file.Name}'");
+                    empty++;
+                    if (!quiet && warnings.Length == 0) Log(LogKind.Warning, $"No audio in '{file.Name}'");
                     continue;
                 }
                 foreach (var sound in sounds)
@@ -1040,12 +1109,14 @@ public sealed partial class MainViewModel : ObservableObject
                         var path = await Task.Run(() => AudioExport.Save(sound, Settings));
                         saved++;
                         LastExportPath = path;
-                        Log(LogKind.Information, $"Successfully saved '{Path.GetFileName(path)}'");
+                        if (!quiet) Log(LogKind.Information, $"Successfully saved '{Path.GetFileName(path)}'");
                     }
                     catch (Exception e)
                     {
                         failed++;
-                        Log(e is MissingDecoderException ? LogKind.Warning : LogKind.Error, $"{sound.FileName}: {e.Message}");
+                        Serilog.Log.Warning(e, "Audio export failed for {Sound}", sound.FileName);
+                        if (!quiet || failed <= MaxBulkErrors)
+                            Log(e is MissingDecoderException ? LogKind.Warning : LogKind.Error, $"{sound.FileName}: {e.Message}");
                     }
                 }
             }
@@ -1053,11 +1124,14 @@ public sealed partial class MainViewModel : ObservableObject
             {
                 failed++;
                 Serilog.Log.Error(e, "Audio export failed for {Path}", file.Path);
-                Log(LogKind.Error, $"{file.Name}: {e.Message}");
+                if (!quiet || failed <= MaxBulkErrors) Log(LogKind.Error, $"{file.Name}: {e.Message}");
             }
         }
-        SetStatus(saved > 0 ? StatusKind.Completed : StatusKind.Failed,
-            saved > 0 ? $"Completed: {saved} sound(s)" + (failed > 0 ? $", {failed} failed" : "") : "Failed");
+        if (quiet) LogBulkSummary(saved, "sound(s)", empty, failed);
+        if (token.IsCancellationRequested) FinishBulkStatus(saved > 0, token);
+        else
+            SetStatus(saved > 0 ? StatusKind.Completed : StatusKind.Failed,
+                saved > 0 ? $"Completed: {saved} sound(s)" + (failed > 0 ? $", {failed} failed" : "") : "Failed");
     }
 
     // Models, animations, worlds and textures go to FModel's Export Session (Views › Export Session)
@@ -1070,6 +1144,63 @@ public sealed partial class MainViewModel : ObservableObject
 
     [RelayCommand]
     private Task ExportWorld(IList? items) => QueueExportsAsync(items, "world", e => e is UWorld);
+
+    // ---------- Export Folder ----------
+
+    private CancellationTokenSource? _bulk;
+    private CancellationToken BulkToken => _bulk?.Token ?? CancellationToken.None;
+
+    /// <summary>A folder export is running: Esc cancels it (FModel's ThreadWorker).</summary>
+    public bool CanCancel => _bulk is not null || ExportSession.IsRunning;
+
+    /// <summary>FModel's Escape: stops the folder export (or the Export Session) in progress.</summary>
+    public void CancelOperation()
+    {
+        _bulk?.Cancel();
+        if (ExportSession.IsRunning) ExportSession.Cancel();
+    }
+
+    /// <summary>Every file under a folder, its subfolders included.</summary>
+    public static IEnumerable<GameFile> FolderFiles(FolderNode folder) => folder.Files.Concat(folder.Children.SelectMany(FolderFiles));
+
+    /// <summary>
+    /// FModel's Export Folder: what Export does for a selection, for every package of the folder and its subfolders.
+    /// Models, animations, worlds, textures and raw data go through the Export Session like a selection does.
+    /// </summary>
+    public async Task ExportFolderAsync(FolderNode folder, FolderExport kind)
+    {
+        if (_archive is null || _bulk is not null) return;
+        var items = FolderFiles(folder).Select(f => new AssetItem(f)).ToList();
+        if (items.Count == 0)
+        {
+            Log(LogKind.Warning, $"'{folder.Name}' has no packages");
+            return;
+        }
+        IAsyncRelayCommand<IList?> command = kind switch
+        {
+            FolderExport.RawData => ExportRawDataCommand,
+            FolderExport.Properties => ExportPropertiesCommand,
+            FolderExport.Textures => ExportTextureCommand,
+            FolderExport.Code => ExportCodeCommand,
+            FolderExport.Models => ExportModelCommand,
+            FolderExport.Worlds => ExportWorldCommand,
+            FolderExport.Animations => ExportAnimationCommand,
+            _ => ExportAudioCommand
+        };
+        Log(LogKind.Information, $"Exporting {kind} from the {items.Count:N0} files of '{folder.FullPath}' (Esc cancels)");
+        _bulk = new CancellationTokenSource();
+        OnPropertyChanged(nameof(CanCancel));
+        try
+        {
+            await command.ExecuteAsync(items);
+        }
+        finally
+        {
+            _bulk.Dispose();
+            _bulk = null;
+            OnPropertyChanged(nameof(CanCancel));
+        }
+    }
 
     /// <summary>FModel's Export Session: the queue, its options and its last results.</summary>
     public ExportSessionViewModel ExportSession { get; } = new();
@@ -1089,10 +1220,35 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         var provider = _archive.Provider;
+        var token = BulkToken;
         SetStatus(StatusKind.Loading, $"Queueing {what}");
         try
         {
-            var exports = await Task.Run(() => files.SelectMany(f => AssetPreview.LoadExports(provider, f).Where(filter)).ToArray());
+            // Packages are read in parallel; one that can't be read is skipped (FModel's BulkFolder ignores them)
+            var found = new System.Collections.Concurrent.ConcurrentBag<(int Index, UObject[] Exports)>();
+            var unreadable = new System.Collections.Concurrent.ConcurrentBag<string>();
+            var done = 0;
+            await Task.Run(() => Parallel.For(0, files.Length,
+                new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount / 2), CancellationToken = token }, i =>
+                {
+                    try
+                    {
+                        var matching = AssetPreview.LoadExports(provider, files[i]).Where(filter).ToArray();
+                        if (matching.Length > 0) found.Add((i, matching));
+                    }
+                    catch (Exception e)
+                    {
+                        Serilog.Log.Warning(e, "Could not read {Path}", files[i].Path);
+                        unreadable.Add(files[i].Name);
+                    }
+                    var n = Interlocked.Increment(ref done);
+                    if (files.Length > QuietThreshold && n % 50 == 0)
+                        Avalonia.Threading.Dispatcher.UIThread.Post(() => StatusLabel = $"Reading packages for {what}s ({n:N0}/{files.Length:N0})");
+                }), token);
+            if (!unreadable.IsEmpty)
+                Log(LogKind.Warning, $"Could not read {unreadable.Count:N0} package(s): {string.Join(", ", unreadable.Take(MaxBulkErrors))}" +
+                                     (unreadable.Count > MaxBulkErrors ? ", …" : ""));
+            var exports = found.OrderBy(f => f.Index).SelectMany(f => f.Exports).ToArray();
             if (exports.Length == 0)
             {
                 Log(LogKind.Warning, $"No {what} found in the selected package(s)");
@@ -1101,6 +1257,10 @@ public sealed partial class MainViewModel : ObservableObject
             }
             var added = ExportSession.Enqueue(exports, provider);
             await AfterQueueAsync(added, what);
+        }
+        catch (OperationCanceledException)
+        {
+            FinishBulkStatus(false, token);
         }
         catch (Exception e)
         {

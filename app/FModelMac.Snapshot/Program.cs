@@ -440,6 +440,55 @@ if (args is ["--explorer", var expOut, var expPaks, var expGame, var expAes, .. 
     return;
 }
 
+// "--export-folder <outdir> <paks> <EGame> <aes|-> <kind[@seconds]> <folder>..." runs Export Folder on a real game, at
+// once (no queue); "@seconds" presses Esc after that long. Prints the time, the files written and the console
+if (args is ["--export-folder", var efOut, var efPaks, var efGame, var efAes, var efKind, .. var efFolders])
+{
+    efOut = Path.GetFullPath(efOut);
+    Directory.CreateDirectory(efOut);
+    Environment.SetEnvironmentVariable("FMODELMAC_DATA_DIR", Path.Combine(efOut, "data"));
+    new AppSettings
+    {
+        ArchiveDir = efPaks, Game = efGame, AesKey = efAes == "-" ? null : efAes, OutputDir = Path.Combine(efOut, "Output"),
+        UsmapPath = Environment.GetEnvironmentVariable("FMODELMAC_USMAP"), ExportImmediately = true
+    }.Save();
+    RunOnUiThread(SnapshotApp.BuildAvaloniaApp(), async () =>
+    {
+        var vm = new MainViewModel();
+        var window = new MainWindow { DataContext = vm, Width = 1600, Height = 950 };
+        window.Show();
+        await WaitFor(() => vm.Archives.Count > 0 && vm.IsReady, "the game");
+        await vm.LoadCommand.ExecuteAsync(null);
+        var parts = efKind.Split('@');
+        var kind = Enum.Parse<FolderExport>(parts[0]);
+        foreach (var folder in efFolders)
+        {
+            if (vm.NavigateToFolder(folder) is not { } node)
+            {
+                Console.WriteLine($"Not found: {folder}");
+                continue;
+            }
+            var before = vm.Logs.Count;
+            var exportsDir = vm.Settings.ExportsDir;
+            var existing = Directory.Exists(exportsDir) ? Directory.GetFiles(exportsDir, "*", SearchOption.AllDirectories).Length : 0;
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var task = vm.ExportFolderAsync(node, kind);
+            if (parts.Length > 1)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(double.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture)));
+                Console.WriteLine($"  Esc after {watch.Elapsed.TotalSeconds:F1}s ({vm.StatusText})");
+                window.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Escape });
+            }
+            await task;
+            var written = (Directory.Exists(exportsDir) ? Directory.GetFiles(exportsDir, "*", SearchOption.AllDirectories).Length : 0) - existing;
+            Console.WriteLine($"{kind} {folder}: {MainViewModel.FolderFiles(node).Count():N0} files -> {written:N0} written in {watch.Elapsed.TotalSeconds:F1}s | {vm.StatusText}");
+            foreach (var log in vm.Logs.Skip(before)) Console.WriteLine($"    [{log.Kind}] {log.Message}");
+        }
+        window.Close();
+    }, TimeSpan.FromMinutes(30));
+    return;
+}
+
 // "--unluac <chunk>..." decompiles compiled Lua files from disk with the bundled libunluac (FMODELMAC_LUA_MODE=
 // disassemble for the other mode); prints each result's status and its first FMODELMAC_LINES lines (default 15)
 if (args is ["--unluac", .. var chunkFiles])
@@ -1068,6 +1117,7 @@ async Task RunAsync()
     Save(window, "2-folders.png");
     await InputTestAsync(window, vm);
     await ExplorerTestAsync(window, vm);
+    await FolderExportTestAsync(window, vm);
 
     vm.SelectedLeftTab = 2;
     vm.SelectedPackage = vm.Packages.First(p => p.Name == "T_Streaming.uasset");
@@ -1712,6 +1762,56 @@ async Task ExplorerTestAsync(MainWindow window, MainViewModel vm)
 
     vm.NavigateToFolder("CUE4ParseFixtures/Content/Fixtures/Textures");
     vm.IsExplorerVisible = false; // the rest of the run looks at the tabs
+}
+
+// FModel's Export Folder: a folder and its subfolders, a summary in the console, Esc cancels, and the export hotkeys
+// act on the folder when the tree has the focus
+async Task FolderExportTestAsync(MainWindow window, MainViewModel vm)
+{
+    int Count(string folder, string extension) =>
+        Directory.Exists(Path.Combine(vm.Settings.ExportsDir, folder))
+            ? Directory.GetFiles(Path.Combine(vm.Settings.ExportsDir, folder), "*" + extension, SearchOption.AllDirectories).Length
+            : 0;
+    string LastLogs(int before) => string.Join(" / ", vm.Logs.Skip(before).Select(l => $"[{l.Kind}] {l.Message}"));
+    var root = "CUE4ParseFixtures/Content/Fixtures";
+
+    var before = vm.Logs.Count;
+    await vm.ExportFolderAsync(vm.NavigateToFolder(root)!, FolderExport.Properties);
+    Console.WriteLine($"Export Folder properties: {Count(root, ".json")} json of {MainViewModel.FolderFiles(vm.SelectedFolder!).Count()} files | {vm.StatusText} | {LastLogs(before)}");
+
+    before = vm.Logs.Count;
+    await vm.ExportFolderAsync(vm.NavigateToFolder(root + "/Blueprints")!, FolderExport.Code);
+    Console.WriteLine($"  code: {Count(root + "/Blueprints", ".cpp")} cpp | {LastLogs(before)}");
+
+    before = vm.Logs.Count;
+    await vm.ExportFolderAsync(vm.NavigateToFolder(root + "/Audio")!, FolderExport.Audio);
+    Console.WriteLine($"  audio: {Count(root + "/Audio", ".wav")} wav | {LastLogs(before)}");
+
+    // Esc right after starting
+    Directory.Delete(Path.Combine(vm.Settings.ExportsDir, root), true);
+    before = vm.Logs.Count;
+    var running = vm.ExportFolderAsync(vm.NavigateToFolder(root)!, FolderExport.Properties);
+    await Task.Delay(30);
+    var canCancel = vm.CanCancel;
+    window.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Escape });
+    await running;
+    Console.WriteLine($"  Esc: could cancel {canCancel} | {Count(root, ".json")} json | status {vm.StatusText} | {LastLogs(before)}");
+
+    // ⌘⇧P (Export Properties, set by an earlier test) with the focus in the folder tree exports the folder
+    vm.Settings.Hotkeys.ExportProperties = new Hotkey(Key.P, KeyModifiers.Meta | KeyModifiers.Shift);
+    vm.SelectedLeftTab = 1;
+    var animations = vm.NavigateToFolder(root + "/Animations")!;
+    await Task.Delay(100);
+    window.FindControl<ListBox>("FolderList")!.Focus();
+    before = vm.Logs.Count;
+    window.RaiseEvent(new KeyEventArgs
+        { RoutedEvent = InputElement.KeyDownEvent, Key = Key.P, KeyModifiers = KeyModifiers.Meta | KeyModifiers.Shift });
+    await WaitFor(() => vm.IsReady && !vm.CanCancel && vm.Logs.Count > before + 1, "folder hotkey export");
+    Console.WriteLine($"  ⌘⇧P on the tree ({animations.Name}): {Count(root + "/Animations", ".json")} json | {LastLogs(before)}");
+    vm.Settings.Hotkeys.ExportProperties = Hotkey.None;
+    Directory.Delete(Path.Combine(vm.Settings.ExportsDir, root), true);
+    vm.NavigateToFolder(root + "/Textures"); // where the rest of the run expects to be
+    vm.IsExplorerVisible = false;
 }
 
 async Task WaitFor(Func<bool> condition, string what)

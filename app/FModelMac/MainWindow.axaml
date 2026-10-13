@@ -256,6 +256,35 @@
                                      DoubleTapped="OnFolderDoubleTapped">
                                 <ListBox.ContextMenu>
                                     <ContextMenu>
+                                        <!-- FModel's Export Folder: the folder and its subfolders -->
+                                        <MenuItem Header="Export Folder">
+                                            <MenuItem.Icon><c:Glyph Data="{StaticResource ExportIcon}" /></MenuItem.Icon>
+                                            <MenuItem x:Name="FolderExportDataItem" Header="Raw Data (.uasset)" Tag="RawData" Click="OnExportFolderClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource AssetIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="FolderExportPropertiesItem" Header="Properties (.json)" Tag="Properties" Click="OnExportFolderClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource JsonIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="FolderExportTexturesItem" Header="Textures" Tag="Textures" Click="OnExportFolderClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource TextureIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="FolderExportCodeItem" Header="Decompiled Blueprints" Tag="Code" Click="OnExportFolderClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource CodeIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="FolderExportModelsItem" Header="Models" Tag="Models" Click="OnExportFolderClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource ModelIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="FolderExportWorldsItem" Header="Worlds" Tag="Worlds" Click="OnExportFolderClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource WorldIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="FolderExportAnimationsItem" Header="Animations" Tag="Animations" Click="OnExportFolderClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource AnimationIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="FolderExportAudioItem" Header="Audio" Tag="Audio" Click="OnExportFolderClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource AudioIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                        </MenuItem>
+                                        <Separator />
                                         <MenuItem Header="Favorite Directory" Click="OnFavoriteFolderClick">
                                             <MenuItem.Icon><c:Glyph Data="{StaticResource DirectoriesAddIcon}" /></MenuItem.Icon>
                                         </MenuItem>
