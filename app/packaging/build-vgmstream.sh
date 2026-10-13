@@ -77,7 +77,7 @@ fetch_tarball() { # url sha256 -> path of verified tarball in $DL
     file="${DL}/$(basename "$url")"
     mkdir -p "$DL"
     if [[ ! -f "$file" ]]; then
-        log "Downloading $(basename "$url")"
+        log "Downloading $(basename "$url")" >&2 # stdout is the path the caller captures
         curl -fL --retry 3 -sS -o "${file}.part" "$url"
         mv "${file}.part" "$file"
     fi
