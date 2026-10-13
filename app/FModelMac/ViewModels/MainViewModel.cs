@@ -13,6 +13,7 @@ using CUE4Parse.UE4.Assets.Exports.Texture;
 using CUE4Parse.UE4.Objects.Engine;
 using CUE4Parse.UE4.Objects.Engine.Animation;
 using CUE4Parse_Conversion;
+using CUE4Parse.Utils;
 using FModelMac.Rendering;
 using CUE4Parse_Conversion.Options;
 using CUE4Parse.UE4.Versions;
@@ -655,15 +656,9 @@ public sealed partial class MainViewModel : ObservableObject
         return target;
     });
 
+    // Textures go through the ExportSession too, for FModel's texture format, quality, HDR and mip options
     [RelayCommand]
-    private Task ExportTexture(IList? items) => ExportAsync(items, "texture", (file, path) =>
-    {
-        var texture = AssetPreview.LoadExports(_archive!.Provider, file).OfType<UTexture>().FirstOrDefault();
-        if (texture is null || AssetPreview.EncodeTexture(texture) is not { } png) return null;
-        var target = path + ".png";
-        File.WriteAllBytes(target, png);
-        return target;
-    });
+    private Task ExportTexture(IList? items) => ExportWithSessionAsync(items, "texture", e => e is UTexture, null);
 
     private async Task ExportAsync(IList? items, string what, Func<GameFile, string, string?> export)
     {
@@ -764,52 +759,60 @@ public sealed partial class MainViewModel : ObservableObject
     // Models, animations and worlds go through CUE4Parse's ExportSession, like FModel's Export Session
     [RelayCommand]
     private Task ExportModel(IList? items) =>
-        ExportWithSessionAsync(items, "model", e => e is UStaticMesh or USkinnedAsset, MeshFormat);
+        ExportWithSessionAsync(items, "model", e => e is UStaticMesh or USkinnedAsset, null);
 
     // CUE4Parse can't write animations to glTF, and worlds only to USD
     [RelayCommand]
     private Task ExportAnimation(IList? items) =>
-        ExportWithSessionAsync(items, "animation", e => e is UAnimationAsset, MeshFormat is EMeshFormat.Gltf2 ? EMeshFormat.USD : MeshFormat);
+        ExportWithSessionAsync(items, "animation", e => e is UAnimationAsset,
+            Settings.MeshExportFormat is EMeshFormat.Gltf2 ? EMeshFormat.USD : null);
 
     [RelayCommand]
     private Task ExportWorld(IList? items) => ExportWithSessionAsync(items, "world", e => e is UWorld, EMeshFormat.USD);
 
-    private EMeshFormat MeshFormat => Enum.TryParse<EMeshFormat>(Settings.MeshExportFormat, out var f) ? f : EMeshFormat.Gltf2;
-
-    private async Task ExportWithSessionAsync(IList? items, string what, Func<UObject, bool> filter, EMeshFormat format)
+    private async Task ExportWithSessionAsync(IList? items, string what, Func<UObject, bool> filter, EMeshFormat? format)
     {
         var files = (items?.OfType<AssetItem>() ?? []).Select(i => i.File).ToArray();
         if (files.Length == 0 && SelectedPackage is { } selected) files = [selected.File];
         if (files.Length == 0 || _archive is null) return;
 
         var provider = _archive.Provider;
-        var options = new ExportOptions(format, ENaniteMeshFormat.NaniteLast);
-        var session = new ExportSession();
+        var options = Settings.CreateExportOptions(format);
         SetStatus(StatusKind.Loading, $"Exporting {what}");
 
         try
         {
-            var queued = await Task.Run(() =>
-            {
-                var count = 0;
-                foreach (var file in files)
-                {
-                    foreach (var export in AssetPreview.LoadExports(provider, file).Where(filter))
-                    {
-                        session.Add(export);
-                        count++;
-                    }
-                }
-                return count;
-            });
-            if (queued == 0)
+            var exports = await Task.Run(() => files.SelectMany(f => AssetPreview.LoadExports(provider, f).Where(filter)).ToArray());
+            if (exports.Length == 0)
             {
                 Log(LogKind.Warning, $"No {what} found in the selected package(s)");
                 SetStatus(StatusKind.Failed, "Failed");
                 return;
             }
 
-            var results = await session.RunAsync(Settings.ExportsDir, options);
+            var results = await RunSessionAsync(exports, options, what);
+
+            // CUE4Parse can't always read Nanite clusters: "Nanite Only" then leaves the mesh without LODs, so export
+            // those again from the fallback mesh, the normal LODs every Nanite mesh carries
+            if (options.NaniteMeshFormat != ENaniteMeshFormat.NoNanite)
+            {
+                var noLods = results.Where(r => !r.Success && r.Error?.Message.EndsWith("has no LODs") == true)
+                    .Select(r => r.ObjectPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                // Same object path the exporters use: the fixed package path plus the object name
+                string ObjectPath(UObject e) => e.Owner is { } owner
+                    ? $"{provider.FixPath(owner.Name).SubstringBeforeLast('.')}.{e.Name}"
+                    : e.GetPathName();
+                var retry = exports.Where(e => noLods.Contains(ObjectPath(e))).ToArray();
+                if (retry.Length > 0)
+                {
+                    var fallback = Settings.CreateExportOptions(format, ENaniteMeshFormat.NoNanite);
+                    var again = await RunSessionAsync(retry, fallback, what);
+                    foreach (var mesh in retry)
+                        Log(LogKind.Warning, $"Couldn't read the Nanite data of '{mesh.Name}': exported its fallback mesh instead");
+                    results = results.Where(r => !noLods.Contains(r.ObjectPath)).Concat(again).ToArray();
+                }
+            }
+
             var saved = 0;
             foreach (var result in results)
             {
@@ -833,6 +836,14 @@ public sealed partial class MainViewModel : ObservableObject
             Log(LogKind.Error, $"{e.GetType().Name}: {e.Message}");
             SetStatus(StatusKind.Failed, "Failed");
         }
+    }
+
+    private async Task<IReadOnlyList<ExportResult>> RunSessionAsync(IEnumerable<UObject> exports, ExportOptions options, string what)
+    {
+        var session = new ExportSession();
+        foreach (var export in exports) session.Add(export);
+        var progress = new Progress<ExportProgress>(p => StatusLabel = $"Exporting {what} ({p.DisplayText})");
+        return await session.RunAsync(Settings.ExportsDir, options, progress);
     }
 
     [RelayCommand]

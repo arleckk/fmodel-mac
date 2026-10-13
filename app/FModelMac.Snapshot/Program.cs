@@ -7,6 +7,9 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using CommunityToolkit.Mvvm.Input;
 using CUE4Parse.FileProvider.Objects;
+using CUE4Parse_Conversion.Options;
+using CUE4Parse.UE4.Assets.Exports.Material;
+using Newtonsoft.Json;
 using FModelMac;
 using FModelMac.Rendering;
 using CUE4Parse.UE4.Assets.Exports.Animation;
@@ -190,6 +193,84 @@ if (args is ["--versioning", var verOut, var verPaks, var verGame, var verAes])
         editor.Close();
         settings.Close();
     }, TimeSpan.FromMinutes(3));
+    return;
+}
+
+// "--export-options <outdir> <paks dir> <EGame> <aes|-> <package...>" exports models and textures with several
+// combinations of FModel's export options, lists what each wrote, and renders Settings › Export
+if (args is ["--export-options", var eoOut, var eoPaks, var eoGame, var eoAes, ..])
+{
+    eoOut = Path.GetFullPath(eoOut);
+    if (Directory.Exists(eoOut)) Directory.Delete(eoOut, true);
+    Environment.SetEnvironmentVariable("FMODELMAC_DATA_DIR", Path.Combine(eoOut, "data"));
+    new AppSettings
+    {
+        ArchiveDir = eoPaks, Game = eoGame, AesKey = eoAes == "-" ? null : eoAes,
+        UsmapPath = Environment.GetEnvironmentVariable("FMODELMAC_USMAP")
+    }.Save();
+    var packages = args[5..];
+    RunOnUiThread(SnapshotApp.BuildAvaloniaApp(), async () =>
+    {
+        var vm = new MainViewModel();
+        await vm.InitializeGameAsync();
+        var items = packages.Select(p => new AssetItem(vm.Archive!.Provider[p])).ToList();
+        var defaults = JsonConvert.SerializeObject(vm.Settings);
+        var replace = new JsonSerializerSettings { ObjectCreationHandling = ObjectCreationHandling.Replace };
+        var variants = new (string Name, Action<AppSettings> Apply)[]
+        {
+            ("defaults", _ => { }),
+            ("ueformat-zstd-all-lods-sockets", s => { s.MeshExportFormat = EMeshFormat.UEFormat; s.MeshQuality = EMeshQuality.All; s.SocketExportFormat = ESocketFormat.Socket; }),
+            ("actorx-no-materials", s => { s.MeshExportFormat = EMeshFormat.ActorX; s.SaveEmbeddedMaterials = false; }),
+            ("jpeg-q40-all-mips", s => { s.TextureExportFormat = ETextureFormat.Jpeg; s.TextureQuality = 40; s.ExportAllTextureMips = true; }),
+            ("tga-all-layers", s => { s.TextureExportFormat = ETextureFormat.Tga; s.MaterialExportFormat = EMaterialDepth.AllLayers; }),
+            ("usd-forces-png", s => { s.MeshExportFormat = EMeshFormat.USD; s.TextureExportFormat = ETextureFormat.Jpeg; }),
+            ("no-nanite", s => s.NaniteMeshExportFormat = ENaniteMeshFormat.NoNanite),
+            ("nanite-last", s => s.NaniteMeshExportFormat = ENaniteMeshFormat.NaniteLast),
+        };
+        foreach (var (name, apply) in Environment.GetEnvironmentVariable("FMODELMAC_UI_ONLY") is null ? variants : [])
+        {
+            JsonConvert.PopulateObject(defaults, vm.Settings, replace);
+            vm.Settings.OutputDir = Path.Combine(eoOut, name);
+            apply(vm.Settings);
+            var logs = vm.Logs.Count;
+            await vm.ExportModelCommand.ExecuteAsync(items);
+            await vm.ExportTextureCommand.ExecuteAsync(items);
+            var errors = vm.Logs.Skip(logs).Where(l => l.Kind != LogKind.Information).Select(l => l.Message).ToArray();
+            var written = Directory.Exists(vm.Settings.ExportsDir)
+                ? Directory.EnumerateFiles(vm.Settings.ExportsDir, "*", SearchOption.AllDirectories)
+                    .Select(f => $"{Path.GetRelativePath(vm.Settings.ExportsDir, f).Split('/')[^1]} ({new FileInfo(f).Length / 1024.0:0.#} KB)").ToArray()
+                : [];
+            Console.WriteLine($"{name}: {written.Length} files | {string.Join(", ", written.Order().Take(14))}{(written.Length > 14 ? ", …" : "")}");
+            foreach (var error in errors) Console.WriteLine($"  ! {error}");
+        }
+
+        JsonConvert.PopulateObject(defaults, vm.Settings, replace);
+        vm.Settings.NaniteMeshExportFormat = ENaniteMeshFormat.NaniteOnly;
+        var settings = new SettingsWindow(vm.Settings);
+        settings.Show();
+        settings.FindControl<TabControl>("Tabs")!.SelectedIndex = 1;
+        await Task.Delay(300);
+        Dispatcher.UIThread.RunJobs();
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        settings.CaptureRenderedFrame()?.Save(Path.Combine(eoOut, "settings-export.png"));
+        Console.WriteLine("Saved settings-export.png");
+        settings.Close();
+
+        // Second view: JPEG enables the quality slider, scrolled to the textures and materials
+        vm.Settings.TextureExportFormat = ETextureFormat.Jpeg;
+        vm.Settings.TextureQuality = 85;
+        settings = new SettingsWindow(vm.Settings);
+        settings.Show();
+        settings.FindControl<TabControl>("Tabs")!.SelectedIndex = 1;
+        await Task.Delay(300);
+        settings.GetVisualDescendants().OfType<ScrollViewer>().First(v => v.IsEffectivelyVisible).ScrollToEnd();
+        await Task.Delay(200);
+        Dispatcher.UIThread.RunJobs();
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        settings.CaptureRenderedFrame()?.Save(Path.Combine(eoOut, "settings-export-2.png"));
+        Console.WriteLine("Saved settings-export-2.png");
+        settings.Close();
+    }, TimeSpan.FromMinutes(5));
     return;
 }
 

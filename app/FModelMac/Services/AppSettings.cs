@@ -1,8 +1,12 @@
 using System.Diagnostics;
+using CUE4Parse_Conversion.Options;
+using CUE4Parse_Conversion.Writers.UEFormat.Enums;
+using CUE4Parse.UE4.Assets.Exports.Material;
 using CUE4Parse.UE4.Assets.Exports.Texture;
 using CUE4Parse.UE4.Objects.Core.Serialization;
 using CUE4Parse.UE4.Versions;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Converters;
 using Serilog;
 
 namespace FModelMac.Services;
@@ -53,7 +57,34 @@ public sealed class AppSettings
     public EndpointConfig? MappingEndpoint { get; set; }
     /// <summary>Game directories that already got their FModel endpoint preset (applied once, then the user decides).</summary>
     public HashSet<string> EndpointPresetsApplied { get; set; } = new(StringComparer.OrdinalIgnoreCase);
-    public string MeshExportFormat { get; set; } = "Gltf2";
+    // FModel's export options (Settings › Export), passed to CUE4Parse's ExportSession. Defaults are FModel's,
+    // except the mesh format: glTF opens anywhere, UEFormat and ActorX need a Blender add-on.
+    [JsonConverter(typeof(StringEnumConverter))]
+    public EMeshFormat MeshExportFormat { get; set; } = EMeshFormat.Gltf2;
+    [JsonConverter(typeof(StringEnumConverter))]
+    public EMeshQuality MeshQuality { get; set; } = EMeshQuality.Highest;
+    [JsonConverter(typeof(StringEnumConverter))]
+    public ESocketFormat SocketExportFormat { get; set; } = ESocketFormat.Bone;
+    [JsonConverter(typeof(StringEnumConverter))]
+    public EFileCompressionFormat CompressionFormat { get; set; } = EFileCompressionFormat.ZSTD;
+    [JsonConverter(typeof(StringEnumConverter))]
+    public ENaniteMeshFormat NaniteMeshExportFormat { get; set; } = ENaniteMeshFormat.NaniteOnly;
+    public bool SaveMorphTargets { get; set; } = true;
+    [JsonConverter(typeof(StringEnumConverter))]
+    public ETextureFormat TextureExportFormat { get; set; } = ETextureFormat.Png;
+    public int TextureQuality { get; set; } = 100;
+    public bool SaveHdrTexturesAsHdr { get; set; } = true;
+    public bool ExportAllTextureMips { get; set; }
+    [JsonConverter(typeof(StringEnumConverter))]
+    public EMaterialDepth MaterialExportFormat { get; set; } = EMaterialDepth.TopLayerOnly;
+    public bool SaveEmbeddedMaterials { get; set; } = true;
+
+    /// <summary>FModel's GetExportOptions; the texture platform comes from the game's versioning.</summary>
+    public ExportOptions CreateExportOptions(EMeshFormat? meshFormat = null, ENaniteMeshFormat? naniteFormat = null) => new(
+        meshFormat ?? MeshExportFormat, naniteFormat ?? NaniteMeshExportFormat, MeshQuality, CurrentVersioning.PlatformValue,
+        TextureExportFormat, TextureQuality, SaveHdrTexturesAsHdr, ExportAllTextureMips,
+        MaterialExportFormat, SaveEmbeddedMaterials, SaveMorphTargets, SocketExportFormat, CompressionFormat);
+
     public bool PreviewMeshes { get; set; } = true;
     // Audio (FModel's Audio Player and audio export settings)
     public bool PlayAudioOnExtract { get; set; } = true;

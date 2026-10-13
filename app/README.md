@@ -99,7 +99,14 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
   y limpiar.
 - **Barra de estado** que cambia de color según el estado.
 - **Diálogos:** Directory Selector, AES Manager (clave estática y dinámicas por GUID), Settings
-  (pestañas General, Models, Audio y Endpoints), Search y About.
+  (pestañas General, Export, Audio y Endpoints), Search y About.
+- **Opciones de exportación (Settings › Export):** las de FModel: Mesh Format (glTF, USD,
+  UEFormat, ActorX), Mesh Quality (LODs), Socket Format, Compression (sólo UEFormat), Nanite
+  Format, morph targets; Texture Format (PNG, JPEG, TGA, WebP), Texture Quality (JPEG/WebP),
+  HDR como `.hdr`, todos los mips; Material Depth y exportar los materiales de la malla. Se pasan a
+  la `ExportSession` de CUE4Parse, que ahora también exporta las texturas (arrays por capa,
+  cubemaps como panorama). Si CUE4Parse no puede leer el Nanite de una malla con "Only Nanite LOD",
+  se vuelve a exportar con su malla de respaldo y se avisa en el log.
 - **Versiones del motor (Settings › General):** UE Version, Texture Platform y los tres editores de
   versioning de FModel (Custom Versions, Options, MapStructTypes). Se guardan por carpeta del juego
   y se pasan a CUE4Parse en el `VersionContainer`. A diferencia de FModel, los editores de Options y
@@ -155,6 +162,9 @@ Más modos, contra cualquier juego (desde `app/FModelMac.Snapshot`):
 ```bash
 # Compila vgmstream autocontenido en vendor/vgmstream-build (fuentes en vendor/vgmstream-src; --clean para empezar de cero)
 ../packaging/build-vgmstream.sh
+# Exporta modelos y texturas con varias combinaciones de opciones, lista lo que escribe cada una y
+# captura Settings › Export (FMODELMAC_UI_ONLY=1 sólo hace las capturas)
+dotnet run -- --export-options ./out <carpeta Paks> GAME_UE4_25 <AES|-> Game/Content/.../Malla.uasset Game/Content/.../Textura.uasset
 # Export › Model/Animation sobre una muestra de paquetes
 dotnet run -- --export <carpeta Paks> GAME_UE4_25 <AES> ./out 3
 # Abre el visor 3D real (OpenGL, necesita la pantalla encendida) y guarda capturas: mallas,
