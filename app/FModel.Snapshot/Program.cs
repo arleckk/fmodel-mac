@@ -656,6 +656,41 @@ if (args is ["--json", var jsonPaks, var jsonGame, var jsonAes, ..])
     }
 
     // "--json ... --material <package>" lists what CMaterialParams2 finds in a material: textures, colors, scalars
+    // "--json ... --scan-blend <folder> [max]": the blend the 3D viewer resolves for the materials under a folder,
+    // grouped by kind, to find masked / translucent test assets
+    if (args[4..] is ["--scan-blend", var blendFolder, .. var blendRest])
+    {
+        var maxMaterials = blendRest.Length > 0 ? int.Parse(blendRest[0]) : 400;
+        var prefix = blendFolder.TrimEnd('/') + "/";
+        var context = new FModel.Rendering.ViewerLoadContext(256, vm.Settings.CurrentVersioning.PlatformValue);
+        var byKind = new Dictionary<string, List<string>>();
+        var scanned = 0;
+        foreach (var file in jsonProvider.Files.Values.Where(f => f.Path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && f.Extension == "uasset")
+                     .OrderBy(f => f.Path, StringComparer.OrdinalIgnoreCase))
+        {
+            if (scanned >= maxMaterials) break;
+            var name = file.NameWithoutExtension;
+            if (!(name.StartsWith("M_") || name.StartsWith("MI_") || name.StartsWith("MC_") || name.Contains("Mat"))) continue;
+            try
+            {
+                if (jsonProvider.LoadPackage(file).GetExports().OfType<CUE4Parse.UE4.Assets.Exports.Material.UMaterialInterface>().FirstOrDefault() is not { } material) continue;
+                scanned++;
+                var blend = FModel.Rendering.ViewerModel.ResolveMaterial(material, context).Blend ?? FModel.Rendering.ViewerBlend.Opaque;
+                var key = blend.Kind.ToString();
+                if (!byKind.TryGetValue(key, out var list)) byKind[key] = list = [];
+                list.Add($"{file.PathWithoutExtension} [{blend.Description}]");
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"  {file.Path}: {e.Message}");
+            }
+        }
+        Console.WriteLine($"{scanned} material(s) under {prefix}: {string.Join(", ", byKind.Select(k => $"{k.Value.Count} {k.Key}"))}");
+        foreach (var (kind, list) in byKind.Where(k => k.Key != "Opaque"))
+            foreach (var line in list.Take(8)) Console.WriteLine($"  {kind,-11} {line}");
+        return;
+    }
+
     if (args[4..] is ["--material", var materialPath])
     {
         foreach (var material in jsonProvider.LoadPackage(jsonProvider[materialPath]).GetExports().OfType<CUE4Parse.UE4.Assets.Exports.Material.UMaterialInterface>())

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Official FModel (Windows)
+    url: https://github.com/4sval/FModel
+    about: Issues that also happen in the official FModel, and the original project's discussions.
+  - name: CUE4Parse
+    url: https://github.com/FabianFG/CUE4Parse
+    about: Parsing problems in the library both FModel and this port are built on.

@@ -137,6 +137,13 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
         uniform sampler2D uLayer2;
         uniform sampler2D uLayer3;
         uniform vec4 uLayerTiling;
+        // Blending: 0 opaque, 1 masked (cut out below uClip), 2 translucent, 3 additive, 4 modulate; the opacity is
+        // uOpacity × the diffuse alpha (uAlphaSource 1) or an opacity map's red channel (2)
+        uniform int uBlend;
+        uniform float uClip;
+        uniform float uOpacity;
+        uniform int uAlphaSource;
+        uniform sampler2D uOpacityMap;
         out vec4 fragColor;
 
         const float PI = 3.14159265;
@@ -173,7 +180,10 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
         {
             if (uFlat == 1) { fragColor = vec4(uColor, 1.0); return; }
 
-            vec3 base = uHasTexture == 1 ? texture(uTexture, vUv).rgb : uColor;
+            vec4 texel = uHasTexture == 1 ? texture(uTexture, vUv) : vec4(uColor, 1.0);
+            float alpha = uAlphaSource == 1 && uHasTexture == 1 ? texel.a : uAlphaSource == 2 ? texture(uOpacityMap, vUv).r : 1.0;
+            if (uBlend == 1 && alpha < uClip) discard;
+            vec3 base = texel.rgb;
             if (uLandscape == 1)
             {
                 vec4 w = texture(uWeights, vUv) * step(vec4(1e-4), uLayerTiling);
@@ -220,7 +230,8 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
             vec3 sky = mix(vec3(0.20, 0.19, 0.18), vec3(0.42, 0.46, 0.55), 0.5 + 0.5 * n.y);
             color += albedo * sky * (1.0 - 0.6 * metallic) * occlusion;
 
-            fragColor = vec4(pow(aces(color), vec3(1.0 / 2.2)), 1.0);
+            vec3 shaded = uBlend == 4 ? base : pow(aces(color), vec3(1.0 / 2.2)); // modulate multiplies by the plain color
+            fragColor = vec4(shaded, uBlend >= 2 ? clamp(alpha * uOpacity, 0.0, 1.0) : 1.0);
         }
         """;
 
@@ -665,7 +676,7 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
 
         // Textures are shared between models (maps reuse them a lot): keep exactly the ones in use
         var needed = live.SelectMany(o => o.Model.Sections)
-            .SelectMany(s => new[] { s.Texture, s.NormalTexture, s.MaskTexture, s.Landscape?.Weights }.Concat(s.Landscape?.Textures ?? []))
+            .SelectMany(s => new[] { s.Texture, s.NormalTexture, s.MaskTexture, s.Blend.Mask, s.Landscape?.Weights }.Concat(s.Landscape?.Textures ?? []))
             .OfType<ViewerTexture>().ToHashSet();
         foreach (var unused in _textures.Keys.Where(t => !needed.Contains(t)).ToList())
         {
@@ -768,7 +779,73 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
 
         if (Wireframe) gl.PolygonMode(Gl.FRONT_AND_BACK, Gl.LINE);
         gl.Uniform(flat, Wireframe ? 1 : 0);
+        gl.Uniform(gl.UniformLocation(_meshProgram, "uOpacityMap"), 9);
+        var blendMode = gl.UniformLocation(_meshProgram, "uBlend");
+        var clip = gl.UniformLocation(_meshProgram, "uClip");
+        var opacity = gl.UniformLocation(_meshProgram, "uOpacity");
+        var alphaSource = gl.UniformLocation(_meshProgram, "uAlphaSource");
 
+        void Bind(SceneObject obj, GpuObject gpu, AnimationPose? pose)
+        {
+            gl.Uniform(skinned, pose is not null ? 1 : 0);
+            gl.ActiveTexture(Gl.TEXTURE0 + 1);
+            if (pose is not null) UploadBones(gl, pose.Skinning);
+            else gl.BindTexture(Gl.TEXTURE_2D, _whiteTexture);
+            gl.ActiveTexture(Gl.TEXTURE0);
+            gl.BindVertexArray(gpu.Vao);
+        }
+
+        void Draw(GpuObject gpu, ViewerSection section)
+        {
+            var texture = ShowTextures && section.Texture is { } t ? _textures.GetValueOrDefault(t) : 0;
+            var normalMap = ShowTextures && ShowNormalMaps && section.NormalTexture is { } nt ? _textures.GetValueOrDefault(nt) : 0;
+            var maskMap = ShowTextures && ShowNormalMaps && section.MaskTexture is { } mt ? _textures.GetValueOrDefault(mt) : 0;
+            gl.ActiveTexture(Gl.TEXTURE0 + 2);
+            gl.BindTexture(Gl.TEXTURE_2D, normalMap != 0 ? normalMap : _whiteTexture);
+            gl.ActiveTexture(Gl.TEXTURE0 + 3);
+            gl.BindTexture(Gl.TEXTURE_2D, maskMap != 0 ? maskMap : _whiteTexture);
+            gl.ActiveTexture(Gl.TEXTURE0);
+            var layers = ShowTextures && section.Landscape is { } l ? l : null;
+            var weights = layers is not null ? _textures.GetValueOrDefault(layers.Weights) : 0;
+            gl.ActiveTexture(Gl.TEXTURE0 + 4);
+            gl.BindTexture(Gl.TEXTURE_2D, weights != 0 ? weights : _whiteTexture);
+            var tiling = Vector4.Zero;
+            for (var i = 0; i < 4; i++)
+            {
+                var layer = weights != 0 && layers!.Textures[i] is { } lt ? _textures.GetValueOrDefault(lt) : 0;
+                gl.ActiveTexture(Gl.TEXTURE0 + 5 + i);
+                gl.BindTexture(Gl.TEXTURE_2D, layer != 0 ? layer : _whiteTexture);
+                if (layer != 0) tiling[i] = layers!.Tiling[i];
+            }
+            gl.ActiveTexture(Gl.TEXTURE0);
+            gl.Uniform(landscape, weights != 0 ? 1 : 0);
+            gl.Uniform(layerTiling, tiling.X, tiling.Y, tiling.Z, tiling.W);
+            gl.Uniform(hasNormalMap, normalMap != 0 ? 1 : 0);
+            gl.Uniform(hasMaskMap, maskMap != 0 ? 1 : 0);
+            var layout = section.MaskLayout;
+            gl.Uniform(maskLayout, layout.Roughness, layout.Metallic, layout.Occlusion);
+            gl.BindTexture(Gl.TEXTURE_2D, texture != 0 ? texture : _whiteTexture);
+            gl.Uniform(hasTexture, texture != 0 ? 1 : 0);
+            var c = Wireframe ? new Vector3(0.85f, 0.87f, 0.92f) : section.Color;
+            gl.Uniform(color, c.X, c.Y, c.Z);
+            var blend = Wireframe ? ViewerBlend.Opaque : section.Blend;
+            var source = !ShowTextures ? AlphaSource.None : blend.Source;
+            var opacityMap = source == AlphaSource.Mask && blend.Mask is { } om ? _textures.GetValueOrDefault(om) : 0;
+            if (source == AlphaSource.Mask && opacityMap == 0) source = AlphaSource.None;
+            gl.ActiveTexture(Gl.TEXTURE0 + 9);
+            gl.BindTexture(Gl.TEXTURE_2D, opacityMap != 0 ? opacityMap : _whiteTexture);
+            gl.ActiveTexture(Gl.TEXTURE0);
+            // A masked section with nothing to cut by (textures off) is drawn whole
+            gl.Uniform(blendMode, blend.Kind == BlendKind.Masked && source == AlphaSource.None ? 0 : (int) blend.Kind);
+            gl.Uniform(clip, blend.Clip);
+            gl.Uniform(opacity, blend.Opacity);
+            gl.Uniform(alphaSource, (int) source);
+            gl.DrawElementsInstanced(Gl.TRIANGLES, section.IndexCount, section.FirstIndex, gpu.InstanceCount);
+        }
+
+        // Opaque and masked sections first; the blended ones after them, farthest first, over the depth the opaque
+        // ones left (tested, not written), so they show what's behind them
+        var blended = new List<(SceneObject Obj, GpuObject Gpu, AnimationPose? Pose, ViewerSection Section, float Distance)>();
         foreach (var obj in Scene.VisibleObjects)
         {
             if (!_objects.TryGetValue(obj, out var gpu) || gpu.InstanceCount == 0) continue;
@@ -776,56 +853,47 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
             var pose = model.IsSkinned ? obj.Pose : null;
             pose?.Evaluate(AnimationPhase);
             ApplyMorphs(gl, obj, gpu, pose);
-
-            gl.Uniform(skinned, pose is not null ? 1 : 0);
-            gl.ActiveTexture(Gl.TEXTURE0 + 1);
-            if (pose is not null) UploadBones(gl, pose.Skinning);
-            else gl.BindTexture(Gl.TEXTURE_2D, _whiteTexture);
-            gl.ActiveTexture(Gl.TEXTURE0);
-
-            gl.BindVertexArray(gpu.Vao);
+            Bind(obj, gpu, pose);
+            var distance = -1f;
             foreach (var section in model.Sections)
             {
                 if (!section.IsVisible) continue;
-                var texture = ShowTextures && section.Texture is { } t ? _textures.GetValueOrDefault(t) : 0;
-                var normalMap = ShowTextures && ShowNormalMaps && section.NormalTexture is { } nt ? _textures.GetValueOrDefault(nt) : 0;
-                var maskMap = ShowTextures && ShowNormalMaps && section.MaskTexture is { } mt ? _textures.GetValueOrDefault(mt) : 0;
-                gl.ActiveTexture(Gl.TEXTURE0 + 2);
-                gl.BindTexture(Gl.TEXTURE_2D, normalMap != 0 ? normalMap : _whiteTexture);
-                gl.ActiveTexture(Gl.TEXTURE0 + 3);
-                gl.BindTexture(Gl.TEXTURE_2D, maskMap != 0 ? maskMap : _whiteTexture);
-                gl.ActiveTexture(Gl.TEXTURE0);
-                var layers = ShowTextures && section.Landscape is { } l ? l : null;
-                var weights = layers is not null ? _textures.GetValueOrDefault(layers.Weights) : 0;
-                gl.ActiveTexture(Gl.TEXTURE0 + 4);
-                gl.BindTexture(Gl.TEXTURE_2D, weights != 0 ? weights : _whiteTexture);
-                var tiling = Vector4.Zero;
-                for (var i = 0; i < 4; i++)
+                if (!Wireframe && section.Blend.Kind >= BlendKind.Translucent)
                 {
-                    var layer = weights != 0 && layers!.Textures[i] is { } lt ? _textures.GetValueOrDefault(lt) : 0;
-                    gl.ActiveTexture(Gl.TEXTURE0 + 5 + i);
-                    gl.BindTexture(Gl.TEXTURE_2D, layer != 0 ? layer : _whiteTexture);
-                    if (layer != 0) tiling[i] = layers!.Tiling[i];
+                    if (distance < 0) distance = Vector3.Distance(eye, Vector3.Transform((model.Min + model.Max) / 2, obj.Instances[0]));
+                    blended.Add((obj, gpu, pose, section, distance));
+                    continue;
                 }
-                gl.ActiveTexture(Gl.TEXTURE0);
-                gl.Uniform(landscape, weights != 0 ? 1 : 0);
-                gl.Uniform(layerTiling, tiling.X, tiling.Y, tiling.Z, tiling.W);
-                gl.Uniform(hasNormalMap, normalMap != 0 ? 1 : 0);
-                gl.Uniform(hasMaskMap, maskMap != 0 ? 1 : 0);
-                var layout = section.MaskLayout;
-                gl.Uniform(maskLayout, layout.Roughness, layout.Metallic, layout.Occlusion);
-                gl.BindTexture(Gl.TEXTURE_2D, texture != 0 ? texture : _whiteTexture);
-                gl.Uniform(hasTexture, texture != 0 ? 1 : 0);
-                var c = Wireframe ? new Vector3(0.85f, 0.87f, 0.92f) : section.Color;
-                gl.Uniform(color, c.X, c.Y, c.Z);
-                gl.DrawElementsInstanced(Gl.TRIANGLES, section.IndexCount, section.FirstIndex, gpu.InstanceCount);
+                Draw(gpu, section);
             }
+        }
+
+        if (blended.Count > 0)
+        {
+            gl.Enable(Gl.BLEND);
+            gl.DepthMask(false);
+            SceneObject? bound = null;
+            foreach (var (obj, gpu, pose, section, _) in blended.OrderByDescending(b => b.Distance))
+            {
+                if (bound != obj) Bind(obj, gpu, pose);
+                bound = obj;
+                switch (section.Blend.Kind)
+                {
+                    case BlendKind.Additive: gl.BlendFunc(Gl.SRC_ALPHA, Gl.ONE); break;
+                    case BlendKind.Modulate: gl.BlendFunc(Gl.DST_COLOR, Gl.ZERO); break;
+                    default: gl.BlendFunc(Gl.SRC_ALPHA, Gl.ONE_MINUS_SRC_ALPHA); break;
+                }
+                Draw(gpu, section);
+            }
+            gl.DepthMask(true);
+            gl.BlendFunc(Gl.SRC_ALPHA, Gl.ONE_MINUS_SRC_ALPHA);
+            gl.Disable(Gl.BLEND);
         }
 
         if (Wireframe) gl.PolygonMode(Gl.FRONT_AND_BACK, Gl.FILL);
         gl.BindVertexArray(0);
         gl.BindTexture(Gl.TEXTURE_2D, 0);
-        for (var unit = 1; unit <= 8; unit++)
+        for (var unit = 1; unit <= 9; unit++)
         {
             gl.ActiveTexture(Gl.TEXTURE0 + unit);
             gl.BindTexture(Gl.TEXTURE_2D, 0);

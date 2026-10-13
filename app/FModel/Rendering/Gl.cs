@@ -10,7 +10,7 @@ internal sealed unsafe class Gl
 {
     public const int COLOR_BUFFER_BIT = 0x4000, DEPTH_BUFFER_BIT = 0x0100;
     public const int DEPTH_TEST = 0x0B71, CULL_FACE = 0x0B44, BLEND = 0x0BE2, MULTISAMPLE = 0x809D;
-    public const int LEQUAL = 0x0203, SRC_ALPHA = 0x0302, ONE_MINUS_SRC_ALPHA = 0x0303, ONE = 1;
+    public const int LEQUAL = 0x0203, SRC_ALPHA = 0x0302, ONE_MINUS_SRC_ALPHA = 0x0303, ONE = 1, ZERO = 0, DST_COLOR = 0x0306;
     public const int ARRAY_BUFFER = 0x8892, ELEMENT_ARRAY_BUFFER = 0x8893, STATIC_DRAW = 0x88E4;
     public const int FLOAT = 0x1406, UNSIGNED_INT = 0x1405, UNSIGNED_BYTE = 0x1401;
     public const int TRIANGLES = 0x0004, LINES = 0x0001, TRIANGLE_STRIP = 0x0005;

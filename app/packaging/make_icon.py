@@ -1,14 +1,16 @@
 """Build the macOS app icon (1024px master + .iconset) from FModel's Windows .ico.
 
 Follows Apple's Big Sur icon grid: 1024 canvas, 824px rounded body at (100,100), soft drop shadow.
-Usage: python3 -I make_icon.py <FModel.ico> <out_dir> [dark|light]
+The default "mac" look sets this port apart from the official FModel: a teal body instead of navy and a
+Command-key (⌘) badge at the bottom-right corner (the ⌘ glyph, not Apple's logo).
+Usage: python3 -I make_icon.py <FModel.ico> <out_dir> [mac|dark|light]
 """
 import io
 import struct
 import sys
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 CANVAS = 1024
 BODY = 824
@@ -19,7 +21,12 @@ SS = 4  # supersampling for smooth edges
 THEMES = {
     "dark": ((44, 52, 74), (17, 21, 33)),      # navy, matches FModel's blue/charcoal palette
     "light": ((246, 248, 252), (211, 218, 232)),
+    "mac": ((38, 120, 140), (14, 46, 62)),     # teal: this port's own color
 }
+
+ACCENT = (32, 107, 212)  # FModel's accent blue
+BADGE = 300              # badge diameter on the 1024 canvas
+SYMBOL_FONT = "/System/Library/Fonts/Apple Symbols.ttf"
 
 ICONSET = [(16, 1), (16, 2), (32, 1), (32, 2), (128, 1), (128, 2), (256, 1), (256, 2), (512, 1), (512, 2)]
 
@@ -90,12 +97,38 @@ def build(logo: Image.Image, theme: str) -> Image.Image:
     return Image.alpha_composite(canvas, layer)
 
 
+def with_badge(icon: Image.Image, glyph: str = "\u2318") -> Image.Image:
+    """A round accent-blue badge with a white ring and a glyph, over the body's bottom-right corner."""
+    cx = cy = BODY_OFFSET + BODY - BADGE // 2
+    shadow_alpha = Image.new("L", icon.size, 0)
+    ImageDraw.Draw(shadow_alpha).ellipse((cx - BADGE // 2, cy - BADGE // 2 + 10, cx + BADGE // 2, cy + BADGE // 2 + 10), fill=120)
+    shadow = Image.new("RGBA", icon.size, (0, 0, 0, 0))
+    shadow.putalpha(shadow_alpha.filter(ImageFilter.GaussianBlur(18)))
+    icon = Image.alpha_composite(icon, shadow)
+
+    size = BADGE * SS
+    badge = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(badge)
+    draw.ellipse((0, 0, size - 1, size - 1), fill=(245, 247, 250, 255))
+    draw.ellipse((18, 18, size - 19, size - 19), fill=ACCENT + (255,))
+    font = ImageFont.truetype(SYMBOL_FONT, round(size * 0.63))
+    left, top, right, bottom = draw.textbbox((0, 0), glyph, font=font)
+    draw.text(((size - (right - left)) / 2 - left, (size - (bottom - top)) / 2 - top), glyph, font=font, fill=(255, 255, 255, 255))
+    badge = badge.resize((BADGE, BADGE), Image.LANCZOS)
+
+    layer = Image.new("RGBA", icon.size, (0, 0, 0, 0))
+    layer.paste(badge, (cx - BADGE // 2, cy - BADGE // 2), badge)
+    return Image.alpha_composite(icon, layer)
+
+
 def main() -> None:
     ico, out_dir = Path(sys.argv[1]), Path(sys.argv[2])
-    theme = sys.argv[3] if len(sys.argv) > 3 else "dark"
+    theme = sys.argv[3] if len(sys.argv) > 3 else "mac"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     master = build(largest_ico_frame(ico), theme)
+    if theme == "mac":
+        master = with_badge(master)
     master.save(out_dir / f"icon-{theme}-1024.png")
 
     iconset = out_dir / "FModel.iconset"

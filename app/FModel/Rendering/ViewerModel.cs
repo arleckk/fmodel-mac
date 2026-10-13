@@ -11,6 +11,7 @@ using CUE4Parse.UE4.Assets.Exports.Material;
 using CUE4Parse.UE4.Assets.Exports.SkeletalMesh;
 using CUE4Parse.UE4.Assets.Exports.StaticMesh;
 using CUE4Parse.UE4.Assets.Exports.Texture;
+using CUE4Parse.UE4.Assets.Objects;
 using CUE4Parse.UE4.Objects.Core.Math;
 using CUE4Parse.UE4.Objects.UObject;
 using CUE4Parse_Conversion.Dto;
@@ -85,12 +86,15 @@ public sealed partial class ViewerSection : ObservableObject
     /// <summary>Packed roughness / metallic / occlusion mask, read through <see cref="MaskLayout"/>.</summary>
     [ObservableProperty] private ViewerTexture? _maskTexture;
     [ObservableProperty] private MaskLayout _maskLayout = MaskLayout.None;
+    /// <summary>How the section blends: opaque, alpha-tested (masked) or blended over what's behind it.</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(Details))] private ViewerBlend _blend = ViewerBlend.Opaque;
     /// <summary>A landscape's paint layers, textured in the shader (the section's texture is then the rest).</summary>
     public LandscapeLayers? Landscape { get; init; }
 
     public string Details => Landscape is { } landscape ? $"Landscape layers: {string.Join(", ", landscape.Names)}" :
                              (Texture is { } t ? $"{t.Name} ({t.Width}×{t.Height})" : "No diffuse texture") +
-                             (NormalTexture is not null ? " · normal map" : "") + (MaskTexture is not null ? $" · {MaskLayout}" : "");
+                             (NormalTexture is not null ? " · normal map" : "") + (MaskTexture is not null ? $" · {MaskLayout}" : "") +
+                             (Blend.Kind == BlendKind.Opaque ? "" : $" · {Blend.Description}");
 
     [ObservableProperty] private bool _isVisible = true;
 
@@ -105,6 +109,7 @@ public sealed partial class ViewerSection : ObservableObject
         NormalTexture = material.Normal;
         MaskTexture = material.Masks;
         MaskLayout = material.Layout;
+        Blend = material.Blend ?? ViewerBlend.Opaque;
     }
 }
 
@@ -117,7 +122,50 @@ public sealed record LandscapeLayers(ViewerTexture Weights, ViewerTexture?[] Tex
 
 /// <summary>What the viewer draws of a material: its name, diffuse texture (if any), color, normal map and masks.</summary>
 public sealed record ViewerMaterial(string Name, ViewerTexture? Texture, Vector3 Color, ViewerTexture? Normal = null,
-    ViewerTexture? Masks = null, MaskLayout Layout = default);
+    ViewerTexture? Masks = null, MaskLayout Layout = default, ViewerBlend? Blend = null);
+
+/// <summary>UE's blend modes the viewer draws: Masked cuts out, the others blend over what's behind (drawn last).</summary>
+public enum BlendKind
+{
+    Opaque,
+    Masked,
+    Translucent,
+    Additive,
+    Modulate
+}
+
+/// <summary>Where a section's opacity comes from.</summary>
+public enum AlphaSource
+{
+    None,
+    /// <summary>The diffuse texture's alpha channel.</summary>
+    Diffuse,
+    /// <summary>The red channel of <see cref="ViewerBlend.Mask"/>, an opacity texture of its own.</summary>
+    Mask
+}
+
+/// <summary>
+/// How a material blends: its UE blend mode, the clip value for masked ones, a constant opacity (translucent ones'
+/// "Opacity" parameter) and where the per-pixel opacity comes from.
+/// </summary>
+public sealed record ViewerBlend(BlendKind Kind, float Clip, float Opacity, AlphaSource Source, ViewerTexture? Mask)
+{
+    public static readonly ViewerBlend Opaque = new(BlendKind.Opaque, 0.333f, 1, AlphaSource.None, null);
+
+    public string Description => Kind switch
+    {
+        BlendKind.Masked => $"masked ({SourceName})",
+        BlendKind.Translucent => $"translucent {Opacity:0.##}" + (Source == AlphaSource.None ? "" : $" × {SourceName}"),
+        _ => Kind.ToString().ToLowerInvariant()
+    };
+
+    private string SourceName => Source switch
+    {
+        AlphaSource.Diffuse => "diffuse alpha",
+        AlphaSource.Mask => Mask?.Name ?? "opacity map",
+        _ => "no opacity"
+    };
+}
 
 /// <summary>
 /// Which channel (0–3 for R, G, B, A; -1 for none) of a packed mask texture holds roughness, metallic and ambient
@@ -320,7 +368,8 @@ public sealed class ViewerModel
                 new ViewerSection
                 {
                     FirstIndex = 0, IndexCount = indices.Count, MaterialName = resolved.Name, Texture = resolved.Texture, Color = resolved.Color,
-                    NormalTexture = resolved.Normal, MaskTexture = resolved.Masks, MaskLayout = resolved.Layout
+                    NormalTexture = resolved.Normal, MaskTexture = resolved.Masks, MaskLayout = resolved.Layout,
+                    Blend = resolved.Blend ?? ViewerBlend.Opaque
                 }
             ],
             LodCount = 1,
@@ -519,6 +568,7 @@ public sealed class ViewerModel
                 NormalTexture = resolved.Normal,
                 MaskTexture = resolved.Masks,
                 MaskLayout = resolved.Layout,
+                Blend = resolved.Blend ?? ViewerBlend.Opaque,
                 Color = resolved.Texture is null && untexturedColor is { } terrain ? terrain : resolved.Color
             });
         }
@@ -585,9 +635,12 @@ public sealed class ViewerModel
                 ? new Vector3(c.R, c.G, c.B)
                 : fallback;
 
-            return new ViewerMaterial(material.Name, Decoded(texture, context, context.MaxTextureSize), color,
+            var diffuse = Decoded(texture, context, context.MaxTextureSize);
+            var blend = ResolveBlend(material, parameters, diffuse,
+                all.Where(p => p.Texture != texture && p.Texture != normal && p.Texture != mask).ToList(), context);
+            return new ViewerMaterial(material.Name, diffuse, color,
                 Decoded(normal, context, context.DetailTextureSize),
-                layout is null ? null : Decoded(mask, context, context.DetailTextureSize), layout ?? MaskLayout.None);
+                layout is null ? null : Decoded(mask, context, context.DetailTextureSize), layout ?? MaskLayout.None, blend);
         }
         catch (Exception e)
         {
@@ -595,6 +648,87 @@ public sealed class ViewerModel
             return new ViewerMaterial(material.Name, null, fallback);
         }
     }
+
+    // Opacity textures and parameters, by name: "OpacityMask", "T_Leaf_Alpha", "Opacity", "Cutout"… A bare "Mask"
+    // isn't one: games use it for color/region masks (DSR's Ankylomon_Mask would cut away most of the body)
+    private static readonly Regex OpacityName = new(@"opacity|alpha|cutout|transparen|(^|[_ ])op$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// The material's blend mode, read along the instance chain: an instance's BasePropertyOverrides only count when
+    /// their bOverride_ flag is set (CUE4Parse's GetParams takes the struct's BlendMode as is, so an instance that only
+    /// overrides, say, TwoSided would turn a masked parent opaque). Then where the opacity comes from: the diffuse
+    /// texture's alpha when it has one, else an opacity texture of the material; translucent ones also take their
+    /// "Opacity" scalar. A masked material with nothing to cut by is drawn opaque.
+    /// </summary>
+    private static ViewerBlend ResolveBlend(UMaterialInterface material, CMaterialParams2 parameters, ViewerTexture? diffuse,
+        List<(string Name, UTexture Texture)> others, ViewerLoadContext context)
+    {
+        EBlendMode? mode = null;
+        float? clip = null;
+        for (var current = material; current is not null;)
+        {
+            if (current is UMaterialInstance instance)
+            {
+                if (instance.GetOrDefault<FStructFallback?>("BasePropertyOverrides") is { } overrides)
+                {
+                    if (mode is null && overrides.GetOrDefault<bool>("bOverride_BlendMode"))
+                        mode = overrides.GetOrDefault("BlendMode", EBlendMode.BLEND_Opaque);
+                    if (clip is null && overrides.GetOrDefault<bool>("bOverride_OpacityMaskClipValue"))
+                        clip = overrides.GetOrDefault("OpacityMaskClipValue", 0.333f);
+                }
+                current = instance.Parent?.Load<UMaterialInterface>();
+                continue;
+            }
+            if (current is UMaterial root)
+            {
+                mode ??= root.BlendMode;
+                clip ??= root.OpacityMaskClipValue;
+            }
+            break;
+        }
+
+        var kind = mode switch
+        {
+            EBlendMode.BLEND_Masked => BlendKind.Masked,
+            EBlendMode.BLEND_Translucent or EBlendMode.BLEND_AlphaComposite or EBlendMode.BLEND_AlphaHoldout => BlendKind.Translucent,
+            EBlendMode.BLEND_Additive => BlendKind.Additive,
+            EBlendMode.BLEND_Modulate => BlendKind.Modulate,
+            _ => BlendKind.Opaque
+        };
+        if (kind == BlendKind.Opaque) return ViewerBlend.Opaque;
+
+        var source = AlphaSource.None;
+        ViewerTexture? opacityMap = null;
+        if (diffuse is not null && HasAlpha(diffuse)) source = AlphaSource.Diffuse;
+        else if (others.FirstOrDefault(p => OpacityName.IsMatch(p.Name) || OpacityName.IsMatch(p.Texture.Name)) is { Texture: not null } named &&
+                 Decoded(named.Texture, context, context.DetailTextureSize) is { } decoded)
+        {
+            source = AlphaSource.Mask;
+            opacityMap = decoded;
+        }
+        if (kind == BlendKind.Masked && source == AlphaSource.None) return ViewerBlend.Opaque;
+
+        // Translucent: the "Opacity" scalar when there is one; glass and the like often have no opacity texture
+        var opacity = 1f;
+        if (kind == BlendKind.Translucent)
+        {
+            var scalar = parameters.Scalars.FirstOrDefault(p => OpacityName.IsMatch(p.Key) && !p.Key.Contains("Mask", StringComparison.OrdinalIgnoreCase));
+            opacity = scalar.Key is not null ? Math.Clamp(scalar.Value, 0.02f, 1f) : source == AlphaSource.None ? 0.5f : 1f;
+        }
+        return new ViewerBlend(kind, Math.Clamp(clip ?? 0.333f, 0.01f, 0.99f), opacity, source, opacityMap);
+    }
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ViewerTexture, object> AlphaCache = new();
+
+    /// <summary>Whether a texture's alpha channel says anything (some pixels clearly transparent), from a sample.</summary>
+    private static bool HasAlpha(ViewerTexture texture) => (bool) AlphaCache.GetValue(texture, t =>
+    {
+        int transparent = 0, total = 0;
+        for (var i = 3; i < t.Rgba.Length; i += 4 * 13, total++)
+            if (t.Rgba[i] < 200) transparent++;
+        return transparent > Math.Max(4, total / 500);
+    });
 
     private static UTexture? Fallback(CMaterialParams2 parameters, string name) =>
         parameters.Textures.TryGetValue(name, out var value) && value.TryLoad<UTexture>(out var texture) ? texture : null;

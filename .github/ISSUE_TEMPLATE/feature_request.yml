@@ -1,0 +1,16 @@
+name: Feature request
+description: Something FModel for macOS should do, or a feature of the official FModel that's missing here.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: request
+    attributes:
+      label: What would you like?
+      description: Describe the feature and how you'd use it. If it exists in the official FModel, say where.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else?
+      description: Games or assets it would help with, screenshots, links.

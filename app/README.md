@@ -27,8 +27,9 @@ Produces `app/dist/FModel.app` (~180 MB): a self-contained publish for `osx-arm6
 (Apple Silicon won't run unsigned code). Requires macOS 14+.
 
 - **Icon:** `packaging/make_icon.py` takes the logo from `FModel.ico` (256 px max.) and composites it
-  onto the Big Sur icon template. To regenerate it:
-  `python3 -I app/packaging/make_icon.py upstream/FModel/FModel.ico <tmp> dark`, then
+  onto the Big Sur icon template. Its default `mac` look (teal body and a Command-key ⌘ badge) keeps the
+  logo but sets this port apart from the official FModel in the Dock. To regenerate it:
+  `python3 -I app/packaging/make_icon.py upstream/FModel/FModel.ico <tmp>`, then
   `iconutil -c icns <tmp>/FModel.iconset -o app/packaging/FModel.icns`.
 - **unluac (compiled Lua):** `app/packaging/build-unluac.sh` builds FModel's unluac (Java, MIT,
   commit `fe187b4`) as `vendor/unluac-build/libunluac.dylib` with GraalVM Native Image; the first
@@ -112,6 +113,15 @@ Replicates FModel's `MainWindow.xaml` with AdonisUI's dark palette (layers `#2A2
   parameter, its own color texture (sRGB) whose name indicates it (`BaseTexture`,
   `MainTex`, `*_BaseColor`…) is taken before the `PM_Diffuse` that CUE4Parse guesses, which can be the
   parent material's default texture (in DSR, Flamedramon came out with Apocalymon's).
+  **Transparency** follows each material's UE blend mode, read along the instance chain (an instance's
+  `BasePropertyOverrides` only count with their `bOverride_` flag; CUE4Parse's `GetParams` would turn a
+  masked parent opaque when an instance overrides anything else). **Masked** materials (foliage, fences,
+  feathers) are cut out at their `OpacityMaskClipValue`; **translucent**, **additive** and **modulate**
+  ones are drawn after the opaque ones, farthest first, without writing depth. The opacity comes from the
+  diffuse texture's alpha when it has one, else from a texture named for it (`Opacity`, `Alpha`,
+  `Cutout`… but not a bare `Mask`, which games use for color regions); translucent ones also take their
+  `Opacity` scalar (0.5 when they have none, e.g. glass). A masked material with nothing to cut by stays
+  opaque. Each material's line in MATERIALS says how it blends.
   **Controls** (like Snooper, with its **Orbit / Fly** selector, which is remembered): in Orbit dragging
   rotates around the model and scroll or pinch zoom in; in Fly dragging looks around, scroll
   moves forward and +/- (or scrolling while dragging) change the speed. In both: WASD moves and Q/E
@@ -386,6 +396,8 @@ dotnet run -- --json <Paks folder> GAME_UE4_25 <AES|-> --material Game/Content/.
 dotnet run -- --heightmap-test ./out
 # The FModelMac → FModel data folder move, in a scratch folder
 dotnet run -- --migrate-test ./out
+# The blend each material under a folder resolves to (masked / translucent / additive…), to find test assets
+dotnet run -- --json <Paks folder> GAME_UE4_25 <AES|-> --scan-blend Game/Content/Characters 400
 # Find References (with the index time) and the size of Show Metadata
 dotnet run -- --json <Paks folder> GAME_UE4_25 <AES|-> --refs Game/Content/.../Package.uasset
 # Creates a backup, reads it and compares it with the game (timings); --online-backup <dir> also lists
