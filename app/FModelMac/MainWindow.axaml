@@ -84,7 +84,7 @@
                 <MenuItem Header="3D Viewer" Click="OnModelViewerClick">
                     <MenuItem.Icon><c:Glyph Data="{StaticResource MeshIcon}" /></MenuItem.Icon>
                 </MenuItem>
-                <MenuItem Header="Export Session" IsEnabled="False">
+                <MenuItem Header="Export Session" Click="OnExportSessionClick">
                     <MenuItem.Icon><c:Glyph Data="{StaticResource ExportIcon}" /></MenuItem.Icon>
                 </MenuItem>
                 <MenuItem Header="Audio Player" Click="OnAudioPlayerClick">

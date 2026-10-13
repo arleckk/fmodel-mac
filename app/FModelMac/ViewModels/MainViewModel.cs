@@ -300,6 +300,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void ResetGame()
     {
+        ExportSession.Clear();
         References = null;
         Archives.Clear();
         Packages.Clear();
@@ -672,7 +673,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     // Textures go through the ExportSession too, for FModel's texture format, quality, HDR and mip options
     [RelayCommand]
-    private Task ExportTexture(IList? items) => ExportWithSessionAsync(items, "texture", e => e is UTexture, null);
+    private Task ExportTexture(IList? items) => QueueExportsAsync(items, "texture", e => e is UTexture);
 
     private async Task ExportAsync(IList? items, string what, Func<GameFile, string, string?> export)
     {
@@ -770,30 +771,35 @@ public sealed partial class MainViewModel : ObservableObject
             saved > 0 ? $"Completed: {saved} sound(s)" + (failed > 0 ? $", {failed} failed" : "") : "Failed");
     }
 
-    // Models, animations and worlds go through CUE4Parse's ExportSession, like FModel's Export Session
+    // Models, animations, worlds and textures go to FModel's Export Session (Views › Export Session)
     [RelayCommand]
-    private Task ExportModel(IList? items) =>
-        ExportWithSessionAsync(items, "model", e => e is UStaticMesh or USkinnedAsset, null);
-
-    // CUE4Parse can't write animations to glTF, and worlds only to USD
-    [RelayCommand]
-    private Task ExportAnimation(IList? items) =>
-        ExportWithSessionAsync(items, "animation", e => e is UAnimationAsset,
-            Settings.MeshExportFormat is EMeshFormat.Gltf2 ? EMeshFormat.USD : null);
+    private Task ExportModel(IList? items) => QueueExportsAsync(items, "model", e => e is UStaticMesh or USkinnedAsset);
 
     [RelayCommand]
-    private Task ExportWorld(IList? items) => ExportWithSessionAsync(items, "world", e => e is UWorld, EMeshFormat.USD);
+    private Task ExportAnimation(IList? items) => QueueExportsAsync(items, "animation", e => e is UAnimationAsset);
 
-    private async Task ExportWithSessionAsync(IList? items, string what, Func<UObject, bool> filter, EMeshFormat? format)
+    [RelayCommand]
+    private Task ExportWorld(IList? items) => QueueExportsAsync(items, "world", e => e is UWorld);
+
+    /// <summary>FModel's Export Session: the queue, its options and its last results.</summary>
+    public ExportSessionViewModel ExportSession { get; } = new();
+
+    /// <summary>Raised when assets are queued without "Export immediately", so the window can be pointed at.</summary>
+    public event Action<int>? ExportsQueued;
+
+    private async Task QueueExportsAsync(IList? items, string what, Func<UObject, bool> filter)
     {
         var files = (items?.OfType<AssetItem>() ?? []).Select(i => i.File).ToArray();
         if (files.Length == 0 && SelectedPackage is { } selected) files = [selected.File];
         if (files.Length == 0 || _archive is null) return;
+        if (ExportSession.IsRunning)
+        {
+            Log(LogKind.Warning, "The Export Session is running: wait for it to finish, or cancel it, before queueing more");
+            return;
+        }
 
         var provider = _archive.Provider;
-        var options = Settings.CreateExportOptions(format);
-        SetStatus(StatusKind.Loading, $"Exporting {what}");
-
+        SetStatus(StatusKind.Loading, $"Queueing {what}");
         try
         {
             var exports = await Task.Run(() => files.SelectMany(f => AssetPreview.LoadExports(provider, f).Where(filter)).ToArray());
@@ -803,61 +809,66 @@ public sealed partial class MainViewModel : ObservableObject
                 SetStatus(StatusKind.Failed, "Failed");
                 return;
             }
-
-            var results = await RunSessionAsync(exports, options, what);
-
-            // CUE4Parse can't always read Nanite clusters: "Nanite Only" then leaves the mesh without LODs, so export
-            // those again from the fallback mesh, the normal LODs every Nanite mesh carries
-            if (options.NaniteMeshFormat != ENaniteMeshFormat.NoNanite)
+            var added = ExportSession.Enqueue(exports, provider);
+            if (Settings.ExportImmediately)
             {
-                var noLods = results.Where(r => !r.Success && r.Error?.Message.EndsWith("has no LODs") == true)
-                    .Select(r => r.ObjectPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                // Same object path the exporters use: the fixed package path plus the object name
-                string ObjectPath(UObject e) => e.Owner is { } owner
-                    ? $"{provider.FixPath(owner.Name).SubstringBeforeLast('.')}.{e.Name}"
-                    : e.GetPathName();
-                var retry = exports.Where(e => noLods.Contains(ObjectPath(e))).ToArray();
-                if (retry.Length > 0)
-                {
-                    var fallback = Settings.CreateExportOptions(format, ENaniteMeshFormat.NoNanite);
-                    var again = await RunSessionAsync(retry, fallback, what);
-                    foreach (var mesh in retry)
-                        Log(LogKind.Warning, $"Couldn't read the Nanite data of '{mesh.Name}': exported its fallback mesh instead");
-                    results = results.Where(r => !noLods.Contains(r.ObjectPath)).Concat(again).ToArray();
-                }
+                await RunExportSessionAsync();
+                return;
             }
-
-            var saved = 0;
-            foreach (var result in results)
-            {
-                if (!result.Success)
-                {
-                    Log(LogKind.Error, $"{result.ObjectPath}: {result.Error?.Message ?? "export failed"}");
-                    continue;
-                }
-                foreach (var path in result.DiskFilePaths ?? [])
-                {
-                    saved++;
-                    LastExportPath = path;
-                    Log(LogKind.Information, $"Successfully saved '{Path.GetFileName(path)}'");
-                }
-            }
-            SetStatus(saved > 0 ? StatusKind.Completed : StatusKind.Failed, saved > 0 ? "Completed" : "Failed");
+            Log(LogKind.Information, $"Queued {added} {what}(s) in the Export Session ({ExportSession.QueuedCount} waiting): " +
+                                     "open Views › Export Session to export them");
+            SetStatus(StatusKind.Completed, "Completed");
+            ExportsQueued?.Invoke(added);
         }
         catch (Exception e)
         {
-            Serilog.Log.Error(e, "{What} export failed", what);
+            Serilog.Log.Error(e, "Could not queue {What}", what);
             Log(LogKind.Error, $"{e.GetType().Name}: {e.Message}");
             SetStatus(StatusKind.Failed, "Failed");
         }
     }
 
-    private async Task<IReadOnlyList<ExportResult>> RunSessionAsync(IEnumerable<UObject> exports, ExportOptions options, string what)
+    /// <summary>Runs the Export Session and logs what it wrote, like FModel's LogSummary.</summary>
+    public async Task RunExportSessionAsync()
     {
-        var session = new ExportSession();
-        foreach (var export in exports) session.Add(export);
-        var progress = new Progress<ExportProgress>(p => StatusLabel = $"Exporting {what} ({p.DisplayText})");
-        return await session.RunAsync(Settings.ExportsDir, options, progress);
+        if (_archive is null || ExportSession.QueuedCount == 0 || ExportSession.IsRunning) return;
+        SetStatus(StatusKind.Loading, "Exporting");
+        void OnProgress(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(ExportSessionViewModel.CompletedCount))
+                StatusLabel = $"Exporting ({ExportSession.CompletedCount} done, {ExportSession.Progress:P0})";
+        }
+        ExportSession.PropertyChanged += OnProgress;
+        try
+        {
+            var summary = await ExportSession.RunAsync(Settings, Settings.ExportsDir);
+            if (summary.Files.Count <= 10)
+            {
+                foreach (var file in summary.Files) Log(LogKind.Information, $"Successfully saved '{Path.GetFileName(file)}'");
+            }
+            else
+            {
+                var counts = summary.Files.GroupBy(f => Path.GetExtension(f).TrimStart('.').ToLowerInvariant())
+                    .OrderByDescending(g => g.Count()).Select(g => $"{g.Count()} {g.Key}");
+                Log(LogKind.Information, $"Successfully exported {string.Join(", ", counts)} to {summary.Directory}");
+            }
+            if (summary.Files.Count > 0) LastExportPath = summary.Files[^1];
+            if (summary.Failed > 0)
+                Log(LogKind.Error, $"Failed to export {summary.Failed} asset(s): open Views › Export Session for the details");
+            if (summary.Canceled) Log(LogKind.Warning, "Export canceled");
+            SetStatus(summary.Files.Count > 0 ? StatusKind.Completed : StatusKind.Failed,
+                summary.Canceled ? "Canceled" : summary.Files.Count > 0 ? "Completed" : "Failed");
+        }
+        catch (Exception e)
+        {
+            Serilog.Log.Error(e, "Export Session failed");
+            Log(LogKind.Error, $"{e.GetType().Name}: {e.Message}");
+            SetStatus(StatusKind.Failed, "Failed");
+        }
+        finally
+        {
+            ExportSession.PropertyChanged -= OnProgress;
+        }
     }
 
     [RelayCommand]

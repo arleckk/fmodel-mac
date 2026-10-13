@@ -217,6 +217,21 @@ public partial class MainWindow : Window
     /// <summary>The open Audio Player window, if any (for the test harness).</summary>
     public AudioPlayerWindow? AudioPlayerView => _audioPlayer is { IsVisible: true } window ? window : null;
 
+    private ExportSessionWindow? _exportSession;
+
+    private void OnExportSessionClick(object? sender, RoutedEventArgs e) => ShowExportSession();
+
+    public ExportSessionWindow ShowExportSession()
+    {
+        if (_exportSession is not { IsVisible: true })
+        {
+            _exportSession = new ExportSessionWindow(Vm);
+            _exportSession.Show(this);
+        }
+        _exportSession.Activate();
+        return _exportSession;
+    }
+
     private void OnAudioPlayerClick(object? sender, RoutedEventArgs e) => ShowAudioPlayer();
 
     private void OnSoundsReady(IReadOnlyList<ExtractedSound> sounds) => ShowAudioPlayer().Add(sounds, autoplay: true);

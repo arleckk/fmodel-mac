@@ -1,6 +1,8 @@
 using Avalonia;
 using Avalonia.Media;
+using FModelMac.Services;
 using Serilog;
+using Serilog.Events;
 
 namespace FModelMac;
 
@@ -14,10 +16,10 @@ internal static class Program
     public static void Main(string[] args)
     {
         Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Information()
-            .WriteTo.Console()
-            .WriteTo.File(Path.Combine(LogDirectory, "FModelMac-.log"), rollingInterval: RollingInterval.Day,
-                retainedFileCountLimit: 7)
+            .WithExportLogs()
+            .WriteTo.Console(restrictedToMinimumLevel: LogEventLevel.Information)
+            .WriteTo.File(Path.Combine(LogDirectory, "FModelMac-.log"), restrictedToMinimumLevel: LogEventLevel.Information,
+                rollingInterval: RollingInterval.Day, retainedFileCountLimit: 7)
             .CreateLogger();
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
             Log.Fatal(e.ExceptionObject as Exception, "Unhandled exception");

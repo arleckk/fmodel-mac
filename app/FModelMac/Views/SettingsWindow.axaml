@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:c="using:FModelMac.Controls"
+        xmlns:v="using:FModelMac.Views"
         x:Class="FModelMac.Views.SettingsWindow"
         Title="Settings"
         Width="660" Height="600" CanResize="False"
@@ -68,52 +69,12 @@
                 <Border Background="{StaticResource Layer2BackgroundBrush}" Padding="10,10,4,10">
                     <ScrollViewer HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
                         <StackPanel>
-                            <c:SectionSeparator Text="MODELS" Margin="0,0,0,8" />
-                            <Grid ColumnDefinitions="170,10,*" RowDefinitions="Auto,4,Auto,8,Auto,8,Auto,8,Auto,8,Auto">
-                                <TextBlock Text="Mesh Format" VerticalAlignment="Center" />
-                                <ComboBox x:Name="MeshFormatBox" Grid.Column="2" HorizontalAlignment="Stretch"
-                                          SelectionChanged="OnExportOptionChanged" />
-                                <TextBlock x:Name="MeshFormatHint" Grid.Row="2" Grid.Column="2" Classes="dim" FontSize="11" TextWrapping="Wrap" />
-                                <TextBlock Grid.Row="4" Text="Mesh Quality" VerticalAlignment="Center" />
-                                <ComboBox x:Name="MeshQualityBox" Grid.Row="4" Grid.Column="2" HorizontalAlignment="Stretch" />
-                                <TextBlock Grid.Row="6" Text="Socket Format" VerticalAlignment="Center" />
-                                <ComboBox x:Name="SocketFormatBox" Grid.Row="6" Grid.Column="2" HorizontalAlignment="Stretch" />
-                                <TextBlock x:Name="CompressionLabel" Grid.Row="8" Text="Compression Format" VerticalAlignment="Center" />
-                                <ComboBox x:Name="CompressionBox" Grid.Row="8" Grid.Column="2" HorizontalAlignment="Stretch" />
-                                <TextBlock Grid.Row="10" Text="Nanite Format" VerticalAlignment="Center" />
-                                <ComboBox x:Name="NaniteFormatBox" Grid.Row="10" Grid.Column="2" HorizontalAlignment="Stretch"
-                                          SelectionChanged="OnExportOptionChanged" />
-                            </Grid>
-                            <TextBlock x:Name="NaniteWarning" Margin="180,4,0,0" FontSize="11" TextWrapping="Wrap"
-                                       Foreground="{StaticResource AdonisAlertBrush}"
-                                       Text="Nanite meshes are slower to export. Not recommended for worlds: it adds up for every mesh in the level." />
-                            <CheckBox x:Name="MorphTargetsBox" Margin="180,8,0,0" Content="Export morph targets" />
-                            <CheckBox x:Name="PreviewMeshesBox" Margin="180,4,0,0" Content="Open meshes in the 3D viewer when extracting them" />
-
-                            <c:SectionSeparator Text="TEXTURES" />
-                            <Grid ColumnDefinitions="170,10,*,10,40" RowDefinitions="Auto,8,Auto">
-                                <TextBlock x:Name="TextureFormatLabel" Text="Texture Format" VerticalAlignment="Center" />
-                                <ComboBox x:Name="TextureFormatBox" Grid.Column="2" Grid.ColumnSpan="3" HorizontalAlignment="Stretch"
-                                          SelectionChanged="OnExportOptionChanged" />
-                                <TextBlock x:Name="TextureQualityLabel" Grid.Row="2" Text="Texture Quality" VerticalAlignment="Center" />
-                                <Slider x:Name="TextureQualityBox" Grid.Row="2" Grid.Column="2" Minimum="1" Maximum="100"
-                                        TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="OnTextureQualityChanged" />
-                                <TextBlock x:Name="TextureQualityText" Grid.Row="2" Grid.Column="4" VerticalAlignment="Center"
-                                           HorizontalAlignment="Right" />
-                            </Grid>
-                            <CheckBox x:Name="HdrBox" Margin="180,8,0,0" Content="Save HDR textures as .hdr" />
-                            <CheckBox x:Name="AllMipsBox" Margin="180,4,0,0" Content="Export all mips (one file per mip)" />
+                            <c:SectionSeparator Text="EXPORT" Margin="0,0,0,8" />
+                            <CheckBox x:Name="ExportImmediatelyBox" Margin="180,0,0,0" Content="Export immediately" />
                             <TextBlock Classes="dim" FontSize="11" Margin="180,4,0,0" TextWrapping="Wrap"
-                                       Text="Used by Export › Texture and by the textures of exported models. Quality applies to JPEG and WebP; USD always uses PNG. The texture platform is in General." />
-
-                            <c:SectionSeparator Text="MATERIALS" />
-                            <Grid ColumnDefinitions="170,10,*">
-                                <TextBlock Text="Material Depth" VerticalAlignment="Center" />
-                                <ComboBox x:Name="MaterialDepthBox" Grid.Column="2" HorizontalAlignment="Stretch" />
-                            </Grid>
-                            <CheckBox x:Name="MaterialsBox" Margin="180,8,0,0" Content="Auto-export attached materials" />
-                            <TextBlock Classes="dim" FontSize="11" Margin="180,4,0,0" TextWrapping="Wrap"
-                                       Text="When exporting a mesh, also find and export its materials. For geometry-only exports it's much faster to turn this off." />
+                                       Text="Off, like FModel: Export › Model, Animation, World and Texture queue the assets in Views › Export Session, where you export them all at once. On: they're exported right away." />
+                            <CheckBox x:Name="PreviewMeshesBox" Margin="180,8,0,0" Content="Open meshes in the 3D viewer when extracting them" />
+                            <v:ExportOptionsPanel x:Name="ExportOptions" />
                         </StackPanel>
                     </ScrollViewer>
                 </Border>

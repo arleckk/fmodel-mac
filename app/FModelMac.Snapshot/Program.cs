@@ -22,6 +22,10 @@ using FModelMac.Views;
 // fixtures and saves screenshots, so the UI can be checked without a display session.
 // "--export <paks dir> <EGame> <aes> <outdir> [count]" instead exercises Export › Model/Animation
 // on a real game, sampling packages by their usual name prefixes.
+
+// Exporter logs feed the Export Session's per-asset logs, like in the app
+Serilog.Log.Logger = new Serilog.LoggerConfiguration().WithExportLogs(Serilog.Events.LogEventLevel.Warning).CreateLogger();
+
 if (args is ["--export", var paks, var gameVersion, var aesKey, var exportOut, ..])
 {
     var count = args.Length > 5 ? int.Parse(args[5]) : 3;
@@ -231,6 +235,7 @@ if (args is ["--export-options", var eoOut, var eoPaks, var eoGame, var eoAes, .
         {
             JsonConvert.PopulateObject(defaults, vm.Settings, replace);
             vm.Settings.OutputDir = Path.Combine(eoOut, name);
+            vm.Settings.ExportImmediately = true;
             apply(vm.Settings);
             var logs = vm.Logs.Count;
             await vm.ExportModelCommand.ExecuteAsync(items);
@@ -241,6 +246,7 @@ if (args is ["--export-options", var eoOut, var eoPaks, var eoGame, var eoAes, .
                     .Select(f => $"{Path.GetRelativePath(vm.Settings.ExportsDir, f).Split('/')[^1]} ({new FileInfo(f).Length / 1024.0:0.#} KB)").ToArray()
                 : [];
             Console.WriteLine($"{name}: {written.Length} files | {string.Join(", ", written.Order().Take(14))}{(written.Length > 14 ? ", …" : "")}");
+            Console.WriteLine($"  session: {string.Join(", ", vm.ExportSession.Groups.Select(g => $"{g.Name} {g.Items.Count}"))}");
             foreach (var error in errors) Console.WriteLine($"  ! {error}");
         }
 
@@ -672,6 +678,7 @@ async Task ViewerTestAsync(string outputDir, string[] packages)
 async Task ExportTestAsync(int count)
 {
     var vm = new MainViewModel();
+    vm.Settings.ExportImmediately = true;
     await vm.InitializeGameAsync();
     Console.WriteLine($"Init: {vm.StatusText} | {vm.StatusExtra} | archives {vm.Archives.Count}");
     await vm.LoadCommand.ExecuteAsync(null);
@@ -731,6 +738,7 @@ async Task RunAsync()
     vm.SelectedPackage = vm.Packages.First(p => p.Name == "SK_Fixture.uasset");
     await vm.ExtractAsync(vm.SelectedPackage.File, newTab: true);
     await vm.ExportPropertiesCommand.ExecuteAsync(null);
+    vm.Settings.ExportImmediately = true; // the Export Session queue is tested at the end
     await vm.ExportModelCommand.ExecuteAsync(null);
     vm.SelectedPackage = vm.Packages.First(p => p.Name == "SM_Fixture.uasset");
     await vm.ExportModelCommand.ExecuteAsync(null);
@@ -776,6 +784,35 @@ async Task RunAsync()
         Console.WriteLine($"Decompile: tab '{vm.SelectedTab?.Header}' {vm.SelectedTab?.Document.LineCount} lines | {vm.StatusText}");
         Save(window, "10-decompiled.png");
     }
+
+    // Export Session: queue meshes, textures, an animation and a world, then export them together
+    vm.Settings.ExportImmediately = false;
+    async Task Queue(IAsyncRelayCommand<System.Collections.IList?> command, params string[] names) =>
+        await command.ExecuteAsync(vm.AllFiles().Where(f => names.Contains(f.Name)).Select(f => new AssetItem(f)).ToList());
+    await Queue(vm.ExportModelCommand, "SK_Fixture.uasset", "SM_Fixture.uasset", "SM_Nanite.uasset");
+    await Queue(vm.ExportTextureCommand, "T_Mips.uasset", "T_Array.uasset", "T_FloatRGBA.uasset");
+    await Queue(vm.ExportAnimationCommand, "AS_Fixture.uasset");
+    await Queue(vm.ExportWorldCommand, "Empty.umap");
+    Console.WriteLine($"Queued: {vm.ExportSession.QueuedCount} in {vm.ExportSession.Groups.Count} classes | {vm.Logs[^1].Message}");
+    var session = new ExportSessionWindow(vm);
+    session.Show();
+    await Task.Delay(300);
+    Save(session, "11-export-session-queue.png");
+    await vm.RunExportSessionAsync();
+    foreach (var item in vm.ExportSession.Groups.SelectMany(g => g.Items).Where(i => i.Logs.Count > 0 && !i.IsDependency).Take(2))
+        item.IsExpanded = true;
+    await Task.Delay(300);
+    var es = vm.ExportSession;
+    Console.WriteLine($"Export Session: {es.SucceededCount} ok, {es.FailedCount} failed, {es.Groups.Sum(g => g.Items.Count)} items " +
+                      $"({string.Join(", ", es.Groups.Select(g => $"{g.Name} {g.Items.Count}"))}) | {es.ElapsedText} | {vm.Logs[^1].Message}");
+    foreach (var item in es.Groups.SelectMany(g => g.Items))
+        Console.WriteLine($"  {item.ClassName}/{item.Name}: {item.StateText}{(item.Error is null ? "" : $" ({item.Error})")}, {item.Logs.Count} log(s)");
+    Save(session, "12-export-session-done.png");
+    vm.ExportSession.OverrideOptions = true;
+    session.FindControl<TabControl>("Tabs")!.SelectedIndex = 1;
+    await Task.Delay(300);
+    Save(session, "13-export-session-options.png");
+    session.Close();
 
     window.Close();
 }

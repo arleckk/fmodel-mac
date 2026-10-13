@@ -39,7 +39,7 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
 
 - **Menú:** Directory (Selector, AES, Archives Info), Packages (Search ⌘⇧F, References ⌘⇧R),
   Views, Settings, Help. Lo que todavía no existe en macOS (Backup, Favorite Directories,
-  Export Session, Image Merger) aparece deshabilitado.
+  Image Merger) aparece deshabilitado.
 - **Panel izquierdo, pestaña Archives:** Loading Mode (Multiple/All) + Load, lista GAME ARCHIVES
   (los bloqueados salen en gris) e INFORMATION del contenedor seleccionado.
 - **Folders:** árbol aplanado y virtualizado con los íconos de carpeta de FModel, contador café de
@@ -114,6 +114,15 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
   la `ExportSession` de CUE4Parse, que ahora también exporta las texturas (arrays por capa,
   cubemaps como panorama). Si CUE4Parse no puede leer el Nanite de una malla con "Only Nanite LOD",
   se vuelve a exportar con su malla de respaldo y se avisa en el log.
+- **Export Session (Views › Export Session):** como en FModel, Export › Model/Animation/World/
+  Texture ponen los assets en una cola (o se exportan al momento con "Export immediately" en
+  Settings › Export, apagado por defecto igual que en FModel). La ventana muestra la cola agrupada
+  por clase, el progreso, el tiempo y el ETA, cuántos salieron bien o fallaron, y los logs de cada
+  asset (de un sink de Serilog que recibe lo que reportan los exportadores de CUE4Parse), incluidos
+  los materiales y texturas que se exportan junto con una malla. Se puede quitar assets de la cola,
+  cancelar, abrir el archivo en Finder y, en Export Options, sobrescribir las opciones y la carpeta
+  sólo para esa sesión (o guardarlas como default). Como CUE4Parse usa un juego de opciones por
+  corrida, la cola se exporta en grupos: los mundos (sólo USD) y, con glTF, las animaciones (USD).
 - **Versiones del motor (Settings › General):** UE Version, Texture Platform y los tres editores de
   versioning de FModel (Custom Versions, Options, MapStructTypes). Se guardan por carpeta del juego
   y se pasan a CUE4Parse en el `VersionContainer`. A diferencia de FModel, los editores de Options y

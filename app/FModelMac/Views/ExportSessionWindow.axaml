@@ -1,0 +1,149 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:c="using:FModelMac.Controls"
+        xmlns:v="using:FModelMac.Views"
+        xmlns:vm="using:FModelMac.ViewModels"
+        x:Class="FModelMac.Views.ExportSessionWindow"
+        x:DataType="vm:ExportSessionViewModel"
+        Title="Export Session"
+        Width="760" Height="680" MinWidth="560" MinHeight="420"
+        WindowStartupLocation="CenterOwner">
+    <Window.Styles>
+        <Style Selector="TreeViewItem">
+            <Setter Property="IsExpanded" Value="{ReflectionBinding IsExpanded, Mode=TwoWay}" />
+        </Style>
+        <Style Selector="TextBlock.ok">
+            <Setter Property="Foreground" Value="#66BB6A" />
+        </Style>
+        <Style Selector="TextBlock.error">
+            <Setter Property="Foreground" Value="#EF5350" />
+        </Style>
+        <Style Selector="TextBlock.warning">
+            <Setter Property="Foreground" Value="{StaticResource AdonisAlertBrush}" />
+        </Style>
+    </Window.Styles>
+
+    <DockPanel>
+        <!-- Buttons (FModel: Clear Queue, Cancel, Export, OK) -->
+        <Border DockPanel.Dock="Bottom" Background="{StaticResource Layer1BackgroundBrush}">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" Margin="12,10,6,10">
+                <Button MinWidth="96" Content="Clear Queue" Click="OnClearClick" IsEnabled="{Binding CanClear}" />
+                <Button Grid.Column="2" MinWidth="78" Margin="0,0,12,0" Content="Cancel" Click="OnCancelClick"
+                        IsVisible="{Binding IsRunning}" />
+                <Button Grid.Column="3" MinWidth="78" Margin="0,0,12,0" Content="Export" Click="OnExportClick"
+                        IsEnabled="{Binding CanExport}" Classes="accent" />
+                <Button Grid.Column="4" MinWidth="78" Margin="0,0,6,0" Content="OK" IsCancel="True" Click="OnOkClick" />
+            </Grid>
+        </Border>
+
+        <!-- Status: what's happening, elapsed / ETA, counters, progress -->
+        <StackPanel DockPanel.Dock="Top" Margin="14,12,14,6">
+            <Grid ColumnDefinitions="*,Auto">
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock x:Name="StatusText" FontSize="15" FontWeight="SemiBold" />
+                    <TextBlock Classes="dim" FontSize="11" Margin="0,3,0,0" TextTrimming="LeadingCharacterEllipsis"
+                               Text="{Binding CurrentItem, FallbackValue=''}" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                    <TextBlock Text="{Binding ElapsedText}" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                    <TextBlock FontSize="10" HorizontalAlignment="Right">
+                        <Run Text="ETA " Foreground="{StaticResource AdonisDisabledForegroundBrush}" />
+                        <Run Text="{Binding EtaText}" />
+                    </TextBlock>
+                </StackPanel>
+            </Grid>
+            <StackPanel Orientation="Horizontal" Spacing="18" Margin="0,8,0,0">
+                <TextBlock FontSize="11">
+                    <Run Text="Queued " Foreground="{StaticResource AdonisDisabledForegroundBrush}" />
+                    <Run Text="{Binding QueuedCount}" FontWeight="SemiBold" />
+                </TextBlock>
+                <TextBlock FontSize="11">
+                    <Run Text="Completed " Foreground="{StaticResource AdonisDisabledForegroundBrush}" />
+                    <Run Text="{Binding CompletedCount}" FontWeight="SemiBold" />
+                </TextBlock>
+                <TextBlock FontSize="11">
+                    <Run Text="Succeeded " Foreground="{StaticResource AdonisDisabledForegroundBrush}" />
+                    <Run Text="{Binding SucceededCount}" FontWeight="SemiBold" Foreground="#66BB6A" />
+                </TextBlock>
+                <TextBlock FontSize="11">
+                    <Run Text="Failed " Foreground="{StaticResource AdonisDisabledForegroundBrush}" />
+                    <Run Text="{Binding FailedCount}" FontWeight="SemiBold" Foreground="#EF5350" />
+                </TextBlock>
+            </StackPanel>
+            <ProgressBar Height="5" MinHeight="5" Margin="0,8,0,0" Minimum="0" Maximum="1" Value="{Binding Progress}" />
+        </StackPanel>
+
+        <TabControl x:Name="Tabs" Classes="fill" Margin="10,4,10,10">
+            <TabItem Header="Export Logs">
+                <Border Background="{StaticResource Layer2BackgroundBrush}" Padding="6">
+                    <Panel>
+                        <TreeView x:Name="Queue" ItemsSource="{Binding Groups}">
+                            <TreeView.DataTemplates>
+                                <TreeDataTemplate DataType="vm:ExportClassGroup" ItemsSource="{Binding Items}">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                        <TextBlock Classes="dim" Text="{Binding Items.Count}" />
+                                        <TextBlock Classes="error" IsVisible="{Binding HasErrors}">
+                                            <Run Text="{Binding ErrorCount}" /><Run Text=" error(s)" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                </TreeDataTemplate>
+                                <TreeDataTemplate DataType="vm:ExportItem" ItemsSource="{Binding Logs}">
+                                    <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" ToolTip.Tip="{Binding ObjectPath}">
+                                        <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Classes="dim" FontSize="11" Margin="10,0,10,0" VerticalAlignment="Center"
+                                                   Text="{Binding Directory}" TextTrimming="LeadingCharacterEllipsis" />
+                                        <TextBlock Grid.Column="2" FontSize="11" VerticalAlignment="Center" Text="{Binding StateText}"
+                                                   Classes.ok="{Binding HasFile}" Classes.error="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                                   Classes.dim="{Binding !HasFile}" ToolTip.Tip="{Binding Error}" />
+                                        <Button Grid.Column="3" Classes="toolbar" Margin="6,0,0,0" ToolTip.Tip="Remove from queue"
+                                                IsVisible="{Binding CanRemove}" Click="OnRemoveClick">
+                                            <c:Glyph Data="{StaticResource RemoveIcon}" />
+                                        </Button>
+                                        <Button Grid.Column="4" Classes="toolbar" Margin="6,0,0,0" ToolTip.Tip="Show in Finder"
+                                                IsVisible="{Binding HasFile}" Click="OnRevealClick">
+                                            <c:Glyph Data="{StaticResource FolderIcon}" />
+                                        </Button>
+                                    </Grid>
+                                </TreeDataTemplate>
+                                <DataTemplate DataType="vm:ExportLogEntry">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" ToolTip.Tip="{Binding Details}">
+                                        <TextBlock FontFamily="Menlo, monospace" FontSize="11" Text="{Binding LevelText}"
+                                                   Classes.error="{Binding IsError}" Classes.warning="{Binding IsWarning}" Classes.dim="{Binding !IsError}" />
+                                        <TextBlock FontSize="11" Text="{Binding Message}" TextWrapping="Wrap" MaxWidth="600" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </TreeView.DataTemplates>
+                        </TreeView>
+                        <TextBlock x:Name="EmptyText" HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"
+                                   FontWeight="SemiBold" Classes="dim" TextWrapping="Wrap" MaxWidth="420"
+                                   Text="Nothing queued. Right-click packages and use Export › Model, Animation, World or Texture to add them here." />
+                    </Panel>
+                </Border>
+            </TabItem>
+
+            <TabItem Header="Export Options">
+                <Border Background="{StaticResource Layer2BackgroundBrush}" Padding="10,10,4,10">
+                    <DockPanel>
+                        <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto" Margin="0,0,6,8">
+                            <CheckBox IsChecked="{Binding OverrideOptions}" Content="Override default export options for this session" />
+                            <Button Grid.Column="1" Margin="0,0,6,0" Content="Save as Default" Click="OnMakeDefaultClick"
+                                    ToolTip.Tip="Save these options as your defaults (Settings › Export)" />
+                            <Button Grid.Column="2" Content="Reset" Click="OnResetClick" ToolTip.Tip="Back to your defaults" />
+                        </Grid>
+                        <ScrollViewer HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
+                            <StackPanel IsEnabled="{Binding OverrideOptions}">
+                                <Grid ColumnDefinitions="170,10,*,5,Auto" Margin="0,0,0,4">
+                                    <TextBlock Text="Output Directory" VerticalAlignment="Center" />
+                                    <TextBox x:Name="OutputBox" Grid.Column="2" />
+                                    <Button Grid.Column="4" Content="..." Click="OnBrowseOutputClick" />
+                                </Grid>
+                                <v:ExportOptionsPanel x:Name="OptionsPanel" />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </DockPanel>
+                </Border>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
+</Window>

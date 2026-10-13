@@ -79,11 +79,11 @@ public sealed class AppSettings
     public EMaterialDepth MaterialExportFormat { get; set; } = EMaterialDepth.TopLayerOnly;
     public bool SaveEmbeddedMaterials { get; set; } = true;
 
-    /// <summary>FModel's GetExportOptions; the texture platform comes from the game's versioning.</summary>
-    public ExportOptions CreateExportOptions(EMeshFormat? meshFormat = null, ENaniteMeshFormat? naniteFormat = null) => new(
-        meshFormat ?? MeshExportFormat, naniteFormat ?? NaniteMeshExportFormat, MeshQuality, CurrentVersioning.PlatformValue,
-        TextureExportFormat, TextureQuality, SaveHdrTexturesAsHdr, ExportAllTextureMips,
-        MaterialExportFormat, SaveEmbeddedMaterials, SaveMorphTargets, SocketExportFormat, CompressionFormat);
+    /// <summary>FModel's "Export Immediately": Export › Model/Animation/World/Texture run at once instead of queueing.</summary>
+    public bool ExportImmediately { get; set; }
+
+    public ExportOptions CreateExportOptions(EMeshFormat? meshFormat = null, ENaniteMeshFormat? naniteFormat = null) =>
+        ExportOptionValues.FromSettings(this).ToOptions(CurrentVersioning.PlatformValue, meshFormat, naniteFormat);
 
     public bool PreviewMeshes { get; set; } = true;
     // FModel's "Serialize Script Bytecode" / "Serialize Inlined Shader Maps": extra data in the properties JSON

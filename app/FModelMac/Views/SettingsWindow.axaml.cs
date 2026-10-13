@@ -39,7 +39,8 @@ public partial class SettingsWindow : Window
         PreviewMeshesBox.IsChecked = settings.PreviewMeshes;
         ScriptDataBox.IsChecked = settings.ReadScriptData;
         ShaderMapsBox.IsChecked = settings.ReadShaderMaps;
-        ShowExportOptions(settings);
+        ExportImmediatelyBox.IsChecked = settings.ExportImmediately;
+        ExportOptions.Values = ExportOptionValues.FromSettings(settings);
         AudioFormatBox.SelectedIndex = settings.ConvertAudioToWav ? 0 : 1;
         PlayAudioBox.IsChecked = settings.PlayAudioOnExtract;
         CriwareBox.Text = settings.CriwareKey;
@@ -130,90 +131,6 @@ public partial class SettingsWindow : Window
         VgmstreamText.Text = $"Copied: run '{Vgmstream.InstallCommand}' in Terminal, then reopen Settings";
     }
 
-    // ---------- Export (FModel's export options) ----------
-
-    // FModel's mesh formats, glTF first since it needs no add-on
-    private static readonly EMeshFormat[] MeshFormats = [EMeshFormat.Gltf2, EMeshFormat.USD, EMeshFormat.UEFormat, EMeshFormat.ActorX];
-
-    private static void Fill<T>(ComboBox box, T[] values, T selected) where T : struct, Enum
-    {
-        box.ItemsSource = values.Select(v => v.GetDescription()).ToArray();
-        box.SelectedIndex = Math.Max(0, Array.IndexOf(values, selected));
-    }
-
-    private static void Fill<T>(ComboBox box, T selected) where T : struct, Enum => Fill(box, Enum.GetValues<T>(), selected);
-
-    private static T Read<T>(ComboBox box, T[]? values = null) where T : struct, Enum
-    {
-        values ??= Enum.GetValues<T>();
-        return values[Math.Clamp(box.SelectedIndex, 0, values.Length - 1)];
-    }
-
-    private void ShowExportOptions(AppSettings settings)
-    {
-        Fill(MeshFormatBox, MeshFormats, settings.MeshExportFormat);
-        Fill(MeshQualityBox, settings.MeshQuality);
-        Fill(SocketFormatBox, settings.SocketExportFormat);
-        Fill(CompressionBox, settings.CompressionFormat);
-        Fill(NaniteFormatBox, settings.NaniteMeshExportFormat);
-        MorphTargetsBox.IsChecked = settings.SaveMorphTargets;
-        Fill(TextureFormatBox, settings.TextureExportFormat);
-        TextureQualityBox.Value = Math.Clamp(settings.TextureQuality, 1, 100);
-        HdrBox.IsChecked = settings.SaveHdrTexturesAsHdr;
-        AllMipsBox.IsChecked = settings.ExportAllTextureMips;
-        Fill(MaterialDepthBox, settings.MaterialExportFormat);
-        MaterialsBox.IsChecked = settings.SaveEmbeddedMaterials;
-        UpdateExportOptions();
-    }
-
-    private void OnExportOptionChanged(object? sender, SelectionChangedEventArgs e) => UpdateExportOptions();
-
-    private void OnTextureQualityChanged(object? sender, Avalonia.Controls.Primitives.RangeBaseValueChangedEventArgs e)
-    {
-        // Also raised while the XAML is still loading, before the label exists
-        if (TextureQualityText is { } text) text.Text = $"{(int) e.NewValue}";
-    }
-
-    // FModel's enabling rules: compression is for UEFormat only, USD always writes PNG textures
-    private void UpdateExportOptions()
-    {
-        if (MeshFormatBox.SelectedIndex < 0) return;
-        var format = Read(MeshFormatBox, MeshFormats);
-        MeshFormatHint.Text = format switch
-        {
-            EMeshFormat.Gltf2 => "Opens in Blender and most 3D apps. Animations are saved as USD, since glTF can't hold them.",
-            EMeshFormat.USD => "Opens in Blender, Houdini and other USD apps. Textures are always PNG.",
-            EMeshFormat.UEFormat => "Needs the UEFormat add-on for Blender or the plugin for Unreal (github.com/h4lfheart/UEFormat).",
-            _ => "Needs a PSK/PSA importer, like the Blender add-on at github.com/DarklightGames/io_scene_psk_psa."
-        };
-        var compression = format == EMeshFormat.UEFormat;
-        CompressionLabel.IsEnabled = CompressionBox.IsEnabled = compression;
-        CompressionLabel.Opacity = compression ? 1 : 0.5;
-        var textures = format != EMeshFormat.USD;
-        TextureFormatLabel.IsEnabled = TextureFormatBox.IsEnabled = textures;
-        TextureFormatLabel.Opacity = textures ? 1 : 0.5;
-        var quality = textures && Read<ETextureFormat>(TextureFormatBox) is ETextureFormat.Jpeg or ETextureFormat.Webp;
-        TextureQualityLabel.Opacity = quality ? 1 : 0.5;
-        TextureQualityBox.IsEnabled = quality;
-        NaniteWarning.IsVisible = Read<ENaniteMeshFormat>(NaniteFormatBox) != ENaniteMeshFormat.NoNanite;
-    }
-
-    private void SaveExportOptions()
-    {
-        _settings.MeshExportFormat = Read(MeshFormatBox, MeshFormats);
-        _settings.MeshQuality = Read<EMeshQuality>(MeshQualityBox);
-        _settings.SocketExportFormat = Read<ESocketFormat>(SocketFormatBox);
-        _settings.CompressionFormat = Read<EFileCompressionFormat>(CompressionBox);
-        _settings.NaniteMeshExportFormat = Read<ENaniteMeshFormat>(NaniteFormatBox);
-        _settings.SaveMorphTargets = MorphTargetsBox.IsChecked == true;
-        _settings.TextureExportFormat = Read<ETextureFormat>(TextureFormatBox);
-        _settings.TextureQuality = (int) TextureQualityBox.Value;
-        _settings.SaveHdrTexturesAsHdr = HdrBox.IsChecked == true;
-        _settings.ExportAllTextureMips = AllMipsBox.IsChecked == true;
-        _settings.MaterialExportFormat = Read<EMaterialDepth>(MaterialDepthBox);
-        _settings.SaveEmbeddedMaterials = MaterialsBox.IsChecked == true;
-    }
-
     private async void OnBrowseOutputClick(object? sender, RoutedEventArgs e)
     {
         var result = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "Output Directory" });
@@ -254,7 +171,8 @@ public partial class SettingsWindow : Window
         _settings.PreviewMeshes = PreviewMeshesBox.IsChecked == true;
         _settings.ReadScriptData = ScriptDataBox.IsChecked == true;
         _settings.ReadShaderMaps = ShaderMapsBox.IsChecked == true;
-        SaveExportOptions();
+        _settings.ExportImmediately = ExportImmediatelyBox.IsChecked == true;
+        ExportOptions.Values.ApplyTo(_settings);
         _settings.ConvertAudioToWav = AudioFormatBox.SelectedIndex != 1;
         _settings.PlayAudioOnExtract = PlayAudioBox.IsChecked == true;
         _settings.CriwareKey = string.IsNullOrWhiteSpace(CriwareBox.Text) ? null : CriwareBox.Text.Trim();
