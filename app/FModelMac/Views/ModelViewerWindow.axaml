@@ -14,6 +14,8 @@
                     <Button Content="Frame" ToolTip.Tip="Center the camera on the selection, or on everything (F)" Click="OnFrameClick" />
                     <Button Content="Clear Scene" ToolTip.Tip="Remove every model and map from the viewer" Click="OnClearSceneClick" />
                     <CheckBox x:Name="TexturesToggle" Content="Textures" IsChecked="True" />
+                    <CheckBox x:Name="NormalMapsToggle" Content="Normal Maps" IsChecked="True"
+                              ToolTip.Tip="Normal maps and roughness / metallic / occlusion masks" />
                     <CheckBox x:Name="GridToggle" Content="Grid" IsChecked="True" />
                     <CheckBox x:Name="WireframeToggle" Content="Wireframe" />
                     <CheckBox x:Name="BonesToggle" Content="Skeleton" IsEnabled="False" />
@@ -142,6 +144,7 @@
         <Grid>
             <r:ModelViewport x:Name="Viewport"
                              ShowTextures="{Binding #TexturesToggle.IsChecked}"
+                             ShowNormalMaps="{Binding #NormalMapsToggle.IsChecked}"
                              ShowGrid="{Binding #GridToggle.IsChecked}"
                              Wireframe="{Binding #WireframeToggle.IsChecked}"
                              ShowBones="{Binding #BonesToggle.IsChecked}" />

@@ -622,6 +622,37 @@ if (args is ["--json", var jsonPaks, var jsonGame, var jsonAes, ..])
         return;
     }
 
+    // "--json ... --material <package>" lists what CMaterialParams2 finds in a material: textures, colors, scalars
+    if (args[4..] is ["--material", var materialPath])
+    {
+        foreach (var material in jsonProvider.LoadPackage(jsonProvider[materialPath]).GetExports().OfType<CUE4Parse.UE4.Assets.Exports.Material.UMaterialInterface>())
+        {
+            var p2 = new CUE4Parse.UE4.Assets.Exports.Material.CMaterialParams2();
+            material.GetParams(p2, CUE4Parse.UE4.Assets.Exports.Material.EMaterialDepth.TopLayerOnly);
+            Console.WriteLine($"{material.Name} ({material.ExportType})");
+            foreach (var (name, texture) in p2.Textures)
+            {
+                // Average and spread per channel, to tell how a mask texture is packed
+                var stats = "";
+                if (texture.TryLoad<CUE4Parse.UE4.Assets.Exports.Texture.UTexture>(out var t) && CUE4Parse_Conversion.Textures.TextureDecoder.Decode(t, 64) is { } decoded)
+                {
+                    using var bitmap = CUE4Parse_Conversion.Textures.TextureEncoder.ToSkBitmap(decoded);
+                    var pixels = bitmap.Pixels;
+                    stats = string.Join(" ", new Func<SkiaSharp.SKColor, byte>[] { c => c.Red, c => c.Green, c => c.Blue, c => c.Alpha }.Select((f, i) =>
+                    {
+                        var v = pixels.Select(c => (double) f(c)).ToArray();
+                        var mean = v.Average();
+                        return $"{"RGBA"[i]}={mean:0}±{Math.Sqrt(v.Average(x => (x - mean) * (x - mean))):0}";
+                    })) + $" {t.Format} sRGB={t.SRGB}";
+                }
+                Console.WriteLine($"  texture {name} = {texture} {stats}");
+            }
+            foreach (var (name, color) in p2.Colors) Console.WriteLine($"  color {name} = {color}");
+            foreach (var (name, value) in p2.Scalars.Take(30)) Console.WriteLine($"  scalar {name} = {value}");
+        }
+        return;
+    }
+
     // "--json ... --list-files <regex>" lists matching files plus a count per extension
     if (args[4..] is ["--list-files", var pattern])
     {
@@ -898,6 +929,14 @@ async Task ViewerTestAsync(string outputDir, string[] packages)
             continue;
         }
 
+        // "normalmaps:on|off" switches normal maps and masks, then captures
+        if (package.StartsWith("normalmaps:"))
+        {
+            viewer.ModelViewport.ShowNormalMaps = package.EndsWith("on");
+            await Capture($"normalmaps-{package[11..]}");
+            continue;
+        }
+
         // "swap:<material>" first turns on the overwrite button of the first section in the scene
         var swap = package.StartsWith("swap:");
         var packagePath = swap ? package[5..] : package;
@@ -974,6 +1013,11 @@ async Task ViewerTestAsync(string outputDir, string[] packages)
                 Console.WriteLine($"    {o.Model.Name} ({o.Model.Kind}) × {o.Instances.Length}");
             await Capture($"map-{map.Name}");
 
+            // Which packed masks the materials got, and how they're read
+            foreach (var group in map.Objects.SelectMany(o => o.Model.Sections).Where(x => x.MaskTexture is not null)
+                         .GroupBy(x => (x.MaskTexture!.Name, x.MaskLayout)).OrderByDescending(g => g.Count()).Take(int.Parse(Environment.GetEnvironmentVariable("FMODELMAC_MASKS") ?? "0")))
+                Console.WriteLine($"    mask {group.Key.Name}: {group.Key.MaskLayout} × {group.Count()} ({string.Join(", ", group.Select(x => x.MaterialName).Distinct().Take(3))})");
+
             // Spline meshes, and the landscape close up (maps' bounds include far-away backdrops)
             var splines = map.Objects.Where(o => o.Model.Kind == "Spline Mesh").ToArray();
             (System.Numerics.Vector3 Min, System.Numerics.Vector3 Max) BoxOf(IEnumerable<SceneObject> objects)
@@ -1040,6 +1084,7 @@ async Task ViewerTestAsync(string outputDir, string[] packages)
                           $"radius {model.Radius:0.#}, {model.Bones?.Length ?? 0} bones, built in {watch.ElapsedMilliseconds} ms" +
                           $"{(model.VertexCount == 0 ? $", bones shown: {viewer.ModelViewport.ShowBones}" : "")}");
         foreach (var section in model.Sections) Console.WriteLine($"    {section.MaterialName}: {section.Details}");
+        Console.WriteLine($"    tangent frame: {TangentFrameCheck(model)}");
         foreach (var morph in model.Morphs)
             Console.WriteLine($"    morph {morph.Name}: {morph.Details} " + string.Join(" ", morph.VertexIndices.Select((v, i) =>
                 $"v{v}=({morph.Deltas[i * 6]:0.##},{morph.Deltas[i * 6 + 1]:0.##},{morph.Deltas[i * 6 + 2]:0.##})")));
@@ -1812,6 +1857,35 @@ async Task FolderExportTestAsync(MainWindow window, MainViewModel vm)
     Directory.Delete(Path.Combine(vm.Settings.ExportsDir, root), true);
     vm.NavigateToFolder(root + "/Textures"); // where the rest of the run expects to be
     vm.IsExplorerVisible = false;
+}
+
+// Per triangle, whether the vertices' tangent follows +U and the shader's binormal (-cross(N, T)·sign) follows +V,
+// the directions a UE (DirectX-style) normal map's X and Y point to
+static string TangentFrameCheck(ViewerModel model)
+{
+    const int f = ViewerModel.FloatsPerVertex;
+    var v = model.Vertices;
+    System.Numerics.Vector3 P(uint i) => new(v[i * f], v[i * f + 1], v[i * f + 2]);
+    int tangentOk = 0, binormalOk = 0, total = 0;
+    for (var k = 0; k + 2 < model.Indices.Length; k += 3)
+    {
+        uint a = model.Indices[k], b = model.Indices[k + 1], c = model.Indices[k + 2];
+        var (e1, e2) = (P(b) - P(a), P(c) - P(a));
+        float du1 = v[b * f + 6] - v[a * f + 6], dv1 = v[b * f + 7] - v[a * f + 7];
+        float du2 = v[c * f + 6] - v[a * f + 6], dv2 = v[c * f + 7] - v[a * f + 7];
+        var det = du1 * dv2 - du2 * dv1;
+        if (Math.Abs(det) < 1e-10f) continue;
+        var dPdu = (e1 * dv2 - e2 * dv1) / det;
+        var dPdv = (e2 * du1 - e1 * du2) / det;
+        var n = new System.Numerics.Vector3(v[a * f + 3], v[a * f + 4], v[a * f + 5]);
+        var t = new System.Numerics.Vector3(v[a * f + 8], v[a * f + 9], v[a * f + 10]);
+        if (t.LengthSquared() < 1e-6f || n.LengthSquared() < 1e-6f) continue;
+        var binormal = -System.Numerics.Vector3.Cross(n, t) * v[a * f + 11];
+        total++;
+        if (System.Numerics.Vector3.Dot(t, dPdu) > 0) tangentOk++;
+        if (System.Numerics.Vector3.Dot(binormal, dPdv) > 0) binormalOk++;
+    }
+    return total == 0 ? "no tangents" : $"T along +U {100.0 * tangentOk / total:0}%, B along +V {100.0 * binormalOk / total:0}% of {total:N0} triangles";
 }
 
 async Task WaitFor(Func<bool> condition, string what)

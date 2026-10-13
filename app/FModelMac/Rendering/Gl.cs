@@ -42,6 +42,7 @@ internal sealed unsafe class Gl
     private readonly delegate* unmanaged<int, byte*, int> _getUniformLocation;
     private readonly delegate* unmanaged<int, int, byte, float*, void> _uniformMatrix4fv;
     private readonly delegate* unmanaged<int, float, float, float, void> _uniform3f;
+    private readonly delegate* unmanaged<int, int, int, int, void> _uniform3i;
     private readonly delegate* unmanaged<int, float, float, float, float, void> _uniform4f;
     private readonly delegate* unmanaged<int, float, void> _uniform1f;
     private readonly delegate* unmanaged<int, int, int, int, int, int, int, int, void*, void> _texImage2D;
@@ -113,6 +114,7 @@ internal sealed unsafe class Gl
         _getUniformLocation = (delegate* unmanaged<int, byte*, int>) Load("glGetUniformLocation");
         _uniformMatrix4fv = (delegate* unmanaged<int, int, byte, float*, void>) Load("glUniformMatrix4fv");
         _uniform3f = (delegate* unmanaged<int, float, float, float, void>) Load("glUniform3f");
+        _uniform3i = (delegate* unmanaged<int, int, int, int, void>) Load("glUniform3i");
         _uniform4f = (delegate* unmanaged<int, float, float, float, float, void>) Load("glUniform4f");
         _uniform1f = (delegate* unmanaged<int, float, void>) Load("glUniform1f");
         _texImage2D = (delegate* unmanaged<int, int, int, int, int, int, int, int, void*, void>) Load("glTexImage2D");
@@ -265,6 +267,7 @@ internal sealed unsafe class Gl
     public void Uniform(int location, float x, float y, float z, float w) => _uniform4f(location, x, y, z, w);
     public void Uniform(int location, float x) => _uniform1f(location, x);
     public void Uniform(int location, int x) => _uniform1i(location, x);
+    public void Uniform(int location, int x, int y, int z) => _uniform3i(location, x, y, z);
 
     private int Compile(int type, string source)
     {

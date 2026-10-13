@@ -93,7 +93,15 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
   (38,302 paquetes de FF VII en 0.7 s) que dura hasta que se vuelve a montar el juego.
 - **Visor 3D** (Views › 3D Viewer, o doble clic sobre una malla): mallas estáticas y con
   esqueleto (LOD 0) con su textura difusa, grid, wireframe, esqueleto, visibilidad por material
-  y captura PNG. Arrastrar orbita, clic derecho/Shift paneo, scroll o pellizco zoom, WASD/QE
+  y captura PNG. El sombreado es PBR (GGX), con texturas en sRGB, tone mapping ACES, una luz
+  principal que sigue a la cámara desde arriba y a un lado, otra de relleno y luz ambiental de
+  cielo/suelo. Usa el **normal map** de cada material (tangentes de la malla, convención DirectX
+  de UE) y su textura de **máscaras** para roughness, metallic y oclusión. Como cada juego empaca
+  las máscaras distinto, el layout sale del nombre de la textura o del parámetro (`_ORM`, `_RMA`,
+  `MSRAO`, `SRXO`, `_Roughness`…, o el `SpecularMasks` de Fortnite); si no se reconoce, la máscara
+  no se usa. El interruptor **Normal Maps** apaga ambos. Si el material no tiene un parámetro
+  difuso conocido, se toma la textura de color (sRGB) que no sea el normal map ni la máscara
+  (`BaseTexture`, `MainTex`…). Arrastrar orbita, clic derecho/Shift paneo, scroll o pellizco zoom, WASD/QE
   mueve, F encuadra la selección. Cada malla que abres se **agrega a la escena** junto a las
   demás; el outliner (SCENE) permite ocultar, quitar o seleccionar cada una, y Clear Scene vacía.
   Doble clic en un **material** (instancia o material base) lo muestra sobre un cubo como en FModel
@@ -101,7 +109,8 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
   en la lista MATERIALS, el siguiente material que abras **sustituye el de esa sección** (el
   "overwrite material" de FModel). Settings › Preview tiene Preview Materials y **Preview Max
   Texture Size** (4–4096 px, 1024 por omisión) para las texturas del visor; los mapas usan 512 como
-  máximo, y todo se decodifica con la plataforma de texturas del juego.
+  máximo (256 para normal maps y máscaras), y todo se decodifica con la plataforma de texturas del
+  juego.
   Doble clic en un **mapa** (.umap) carga el nivel completo: actores y componentes adjuntos,
   instancias (ISM/HISM/foliage), niveles de streaming (con su transformación), level instances y
   materiales sobrescritos, con instancing en GPU (una llamada de dibujo por malla). Las **spline
@@ -282,7 +291,8 @@ dotnet run -- --export-options ./out <carpeta Paks> GAME_UE4_25 <AES|-> Game/Con
 # Export › Model/Animation sobre una muestra de paquetes
 dotnet run -- --export <carpeta Paks> GAME_UE4_25 <AES> ./out 3
 # Abre el visor 3D real (OpenGL, necesita la pantalla encendida) y guarda capturas: mallas,
-# animaciones/blend spaces sobre la última malla, y "morph:<nombre|*>=<peso>" para los sliders
+# animaciones/blend spaces sobre la última malla, "morph:<nombre|*>=<peso>" para los sliders y
+# "normalmaps:off|on"; revisa el marco tangente y, con FMODELMAC_MASKS=N, lista las máscaras de un mapa
 dotnet run -- --viewer ./out <carpeta Paks> GAME_UE4_25 <AES|-> <usmap|-> Game/Content/.../Malla.uasset Game/Content/.../BS_Algo.uasset "morph:*=1"
 # Extrae y decodifica sonidos, los guarda en .wav y prueba la reproducción (en silencio)
 dotnet run -- --audio ./out <carpeta Paks> GAME_UE4_25 <AES|-> Game/Content/.../Sonido.uasset
@@ -297,6 +307,8 @@ dotnet run -- --versioning ./out <carpeta Paks> GAME_UE4_25 <AES|->
 dotnet run -- --decode sonido.wav wav salida.f32
 # Imprime el JSON de paquetes (o --scan-morphs para listar mallas con morph targets)
 dotnet run -- --json <carpeta Paks> GAME_UE4_25 <AES|-> Game/Content/.../Paquete.uasset
+# Parámetros de un material (texturas con promedio ± desviación por canal, colores, escalares)
+dotnet run -- --json <carpeta Paks> GAME_UE4_25 <AES|-> --material Game/Content/.../MI_Algo.uasset
 # Find References (con el tiempo del índice) y el tamaño de Show Metadata
 dotnet run -- --json <carpeta Paks> GAME_UE4_25 <AES|-> --refs Game/Content/.../Paquete.uasset
 # Crea un backup, lo lee y lo compara con el juego (tiempos); --online-backup <dir> además lista los de

@@ -21,6 +21,9 @@ public sealed class ModelViewport : OpenGlControlBase
         AvaloniaProperty.Register<ModelViewport, bool>(nameof(ShowGrid), true);
     public static readonly StyledProperty<bool> ShowTexturesProperty =
         AvaloniaProperty.Register<ModelViewport, bool>(nameof(ShowTextures), true);
+    /// <summary>Normal maps and roughness/metallic masks (off: the flat diffuse look, to compare).</summary>
+    public static readonly StyledProperty<bool> ShowNormalMapsProperty =
+        AvaloniaProperty.Register<ModelViewport, bool>(nameof(ShowNormalMaps), true);
     public static readonly StyledProperty<bool> WireframeProperty =
         AvaloniaProperty.Register<ModelViewport, bool>(nameof(Wireframe));
     public static readonly StyledProperty<bool> ShowBonesProperty =
@@ -32,6 +35,7 @@ public sealed class ModelViewport : OpenGlControlBase
 
     public bool ShowGrid { get => GetValue(ShowGridProperty); set => SetValue(ShowGridProperty, value); }
     public bool ShowTextures { get => GetValue(ShowTexturesProperty); set => SetValue(ShowTexturesProperty, value); }
+    public bool ShowNormalMaps { get => GetValue(ShowNormalMapsProperty); set => SetValue(ShowNormalMapsProperty, value); }
     public bool Wireframe { get => GetValue(WireframeProperty); set => SetValue(WireframeProperty, value); }
     public bool ShowBones { get => GetValue(ShowBonesProperty); set => SetValue(ShowBonesProperty, value); }
     /// <summary>Position in the animation cycle, 0 to 1, for every object with a <see cref="SceneObject.Pose"/>.</summary>
@@ -56,12 +60,14 @@ public sealed class ModelViewport : OpenGlControlBase
         in vec4 aModel1;
         in vec4 aModel2;
         in vec4 aModel3;
+        in vec4 aTangent; // xyz + the binormal's sign
         uniform mat4 uViewProjection;
         uniform int uSkinned;
         uniform sampler2D uBones; // one skinning matrix per row, 4 RGBA32F texels each (macOS GL has no SSBOs)
         out vec3 vWorld;
         out vec3 vNormal;
         out vec2 vUv;
+        out vec4 vTangent;
 
         mat4 bone(float index)
         {
@@ -74,6 +80,7 @@ public sealed class ModelViewport : OpenGlControlBase
         {
             vec4 position = vec4(aPosition, 1.0);
             vec3 normal = aNormal;
+            vec3 tangent = aTangent.xyz;
             float total = aWeights.x + aWeights.y + aWeights.z + aWeights.w;
             if (uSkinned == 1 && total > 0.001)
             {
@@ -81,42 +88,112 @@ public sealed class ModelViewport : OpenGlControlBase
                           + aWeights.z * bone(aBones.z) + aWeights.w * bone(aBones.w);
                 position = skin * position;
                 normal = mat3(skin) * normal;
+                tangent = mat3(skin) * tangent;
             }
             mat4 model = mat4(aModel0, aModel1, aModel2, aModel3);
             position = model * position;
             vWorld = position.xyz;
             vNormal = mat3(model) * normal;
+            // A mirroring transform (negative scale) flips the binormal
+            vTangent = vec4(mat3(model) * tangent, determinant(mat3(model)) < 0.0 ? -aTangent.w : aTangent.w);
             vUv = aUv;
             gl_Position = uViewProjection * position;
         }
         """;
 
+    // Physically based enough to read materials: normal maps, packed roughness/metallic/occlusion masks, GGX
+    // specular from a key light that follows the camera, a fill from the camera, a sky/ground ambient, then ACES
+    // tone mapping. Textures are sRGB; lighting happens in linear space.
     private const string MeshFragment = """
         #version 150
         in vec3 vWorld;
         in vec3 vNormal;
         in vec2 vUv;
+        in vec4 vTangent;
         uniform sampler2D uTexture;
         uniform int uHasTexture;
         uniform vec3 uColor;
+        uniform sampler2D uNormalMap;
+        uniform int uHasNormalMap;
+        uniform sampler2D uMaskMap;
+        uniform int uHasMaskMap;
+        uniform ivec3 uMaskLayout; // channels of roughness, metallic, occlusion (-1: none)
         uniform vec3 uCamera;
+        uniform vec3 uKeyLight;    // toward the light
         uniform int uFlat;
         out vec4 fragColor;
+
+        const float PI = 3.14159265;
+
+        float channel(vec4 v, int i) { return i == 0 ? v.r : i == 1 ? v.g : i == 2 ? v.b : v.a; }
+
+        vec3 aces(vec3 x)
+        {
+            return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+        }
+
+        // GGX / Smith / Schlick, the usual UE-like BRDF
+        vec3 light(vec3 n, vec3 v, vec3 l, vec3 albedo, float roughness, float metallic, vec3 radiance)
+        {
+            float nl = max(dot(n, l), 0.0);
+            if (nl <= 0.0) return vec3(0.0);
+            vec3 h = normalize(v + l);
+            float nv = max(dot(n, v), 1e-4);
+            float nh = max(dot(n, h), 0.0);
+            float a = roughness * roughness;
+            float a2 = a * a;
+            float d = nh * nh * (a2 - 1.0) + 1.0;
+            float ndf = a2 / (PI * d * d);
+            float k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
+            float g = nv / (nv * (1.0 - k) + k) * nl / (nl * (1.0 - k) + k);
+            vec3 f0 = mix(vec3(0.04), albedo, metallic);
+            vec3 f = f0 + (1.0 - f0) * pow(1.0 - max(dot(h, v), 0.0), 5.0);
+            vec3 specular = ndf * g * f / (4.0 * nv * nl + 1e-4);
+            vec3 diffuse = (1.0 - f) * (1.0 - metallic) * albedo / PI;
+            return (diffuse + specular) * radiance * nl;
+        }
+
         void main()
         {
             if (uFlat == 1) { fragColor = vec4(uColor, 1.0); return; }
 
             vec3 base = uHasTexture == 1 ? texture(uTexture, vUv).rgb : uColor;
-            vec3 view = normalize(uCamera - vWorld);
-            vec3 n = dot(vNormal, vNormal) > 1e-6 ? normalize(vNormal) : view;
-            if (dot(n, view) < 0.0) n = -n; // game meshes are often two-sided
+            vec3 albedo = pow(base, vec3(2.2));
+            vec3 v = normalize(uCamera - vWorld);
+            vec3 n = dot(vNormal, vNormal) > 1e-6 ? normalize(vNormal) : v;
+            bool back = dot(n, v) < 0.0; // game meshes are often two-sided
 
-            vec3 key = normalize(vec3(0.45, 0.8, 0.4));
-            float diffuse = max(dot(n, key), 0.0);
-            float head = max(dot(n, view), 0.0);
-            float sky = 0.5 + 0.5 * n.y;
-            vec3 color = base * (0.22 + 0.18 * sky + 0.45 * diffuse + 0.3 * head);
-            fragColor = vec4(color, 1.0);
+            if (uHasNormalMap == 1 && dot(vTangent.xyz, vTangent.xyz) > 1e-6)
+            {
+                vec3 t = vTangent.xyz - n * dot(n, vTangent.xyz);
+                if (dot(t, t) > 1e-8)
+                {
+                    t = normalize(t);
+                    // UE's binormal is cross(N, T)·sign; this space is mirrored (Y/Z swapped), hence the minus
+                    vec3 b = -cross(n, t) * (vTangent.w < 0.0 ? -1.0 : 1.0);
+                    vec2 xy = texture(uNormalMap, vUv).rg * 2.0 - 1.0;
+                    float z = sqrt(max(1.0 - dot(xy, xy), 0.0)); // BC5 keeps only X and Y
+                    n = normalize(t * xy.x + b * xy.y + n * z);
+                }
+            }
+            if (back) n = -n;
+
+            float roughness = 0.65, metallic = 0.0, occlusion = 1.0;
+            if (uHasMaskMap == 1)
+            {
+                vec4 m = texture(uMaskMap, vUv);
+                if (uMaskLayout.x >= 0) roughness = channel(m, uMaskLayout.x);
+                if (uMaskLayout.y >= 0) metallic = channel(m, uMaskLayout.y);
+                if (uMaskLayout.z >= 0) occlusion = channel(m, uMaskLayout.z);
+            }
+            roughness = clamp(roughness, 0.08, 1.0);
+
+            vec3 color = light(n, v, normalize(uKeyLight), albedo, roughness, metallic, vec3(3.2))
+                       + light(n, v, v, albedo, roughness, metallic, vec3(0.9)); // fill from the camera
+            vec3 sky = mix(vec3(0.20, 0.19, 0.18), vec3(0.42, 0.46, 0.55), 0.5 + 0.5 * n.y);
+            color += albedo * sky * (1.0 - 0.6 * metallic) * occlusion;
+
+            fragColor = vec4(pow(aces(color), vec3(1.0 / 2.2)), 1.0);
         }
         """;
 
@@ -238,7 +315,8 @@ public sealed class ModelViewport : OpenGlControlBase
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
-        if (change.Property == ShowGridProperty || change.Property == ShowTexturesProperty || change.Property == WireframeProperty ||
+        if (change.Property == ShowGridProperty || change.Property == ShowTexturesProperty || change.Property == ShowNormalMapsProperty ||
+            change.Property == WireframeProperty ||
             change.Property == ShowBonesProperty || change.Property == AnimationPhaseProperty || change.Property == SelectedProperty)
             RequestNextFrameRendering();
     }
@@ -251,7 +329,7 @@ public sealed class ModelViewport : OpenGlControlBase
         {
             var gl = new Gl(glInterface);
             _meshProgram = gl.CompileProgram(MeshVertex, MeshFragment,
-                "aPosition", "aNormal", "aUv", "aBones", "aWeights", "aModel0", "aModel1", "aModel2", "aModel3");
+                "aPosition", "aNormal", "aUv", "aBones", "aWeights", "aModel0", "aModel1", "aModel2", "aModel3", "aTangent");
             _lineProgram = gl.CompileProgram(LineVertex, LineFragment, "aPosition", "aColor");
             _samples = Math.Min(4, gl.GetInteger(Gl.MAX_SAMPLES));
             _whiteTexture = CreateTexture(gl, 1, 1, [255, 255, 255, 255]);
@@ -362,7 +440,8 @@ public sealed class ModelViewport : OpenGlControlBase
         }
 
         // Textures are shared between models (maps reuse them a lot): keep exactly the ones in use
-        var needed = live.SelectMany(o => o.Model.Sections).Select(s => s.Texture).OfType<ViewerTexture>().ToHashSet();
+        var needed = live.SelectMany(o => o.Model.Sections).SelectMany(s => new[] { s.Texture, s.NormalTexture, s.MaskTexture })
+            .OfType<ViewerTexture>().ToHashSet();
         foreach (var unused in _textures.Keys.Where(t => !needed.Contains(t)).ToList())
         {
             gl.DeleteTexture(_textures[unused]);
@@ -390,6 +469,7 @@ public sealed class ModelViewport : OpenGlControlBase
         gl.VertexAttribPointer(0, 3, stride, 0);
         gl.VertexAttribPointer(1, 3, stride, 3 * sizeof(float));
         gl.VertexAttribPointer(2, 2, stride, 6 * sizeof(float));
+        gl.VertexAttribPointer(9, 4, stride, 8 * sizeof(float));
 
         if (model.Skin is { } skin)
         {
@@ -442,6 +522,16 @@ public sealed class ModelViewport : OpenGlControlBase
         gl.Uniform(gl.UniformLocation(_meshProgram, "uCamera"), eye.X, eye.Y, eye.Z);
         gl.Uniform(gl.UniformLocation(_meshProgram, "uTexture"), 0);
         gl.Uniform(gl.UniformLocation(_meshProgram, "uBones"), 1);
+        gl.Uniform(gl.UniformLocation(_meshProgram, "uNormalMap"), 2);
+        gl.Uniform(gl.UniformLocation(_meshProgram, "uMaskMap"), 3);
+        // Key light from above, over the viewer's left shoulder, so shapes read the same from any side
+        var forward = Vector3.Normalize(_target - eye);
+        var right = Vector3.Normalize(Vector3.Cross(forward, Vector3.UnitY));
+        var key = Vector3.Normalize(-forward * 0.55f + Vector3.UnitY * 0.75f - right * 0.4f);
+        gl.Uniform(gl.UniformLocation(_meshProgram, "uKeyLight"), key.X, key.Y, key.Z);
+        var hasNormalMap = gl.UniformLocation(_meshProgram, "uHasNormalMap");
+        var hasMaskMap = gl.UniformLocation(_meshProgram, "uHasMaskMap");
+        var maskLayout = gl.UniformLocation(_meshProgram, "uMaskLayout");
         var skinned = gl.UniformLocation(_meshProgram, "uSkinned");
         var hasTexture = gl.UniformLocation(_meshProgram, "uHasTexture");
         var color = gl.UniformLocation(_meshProgram, "uColor");
@@ -469,6 +559,17 @@ public sealed class ModelViewport : OpenGlControlBase
             {
                 if (!section.IsVisible) continue;
                 var texture = ShowTextures && section.Texture is { } t ? _textures.GetValueOrDefault(t) : 0;
+                var normalMap = ShowTextures && ShowNormalMaps && section.NormalTexture is { } nt ? _textures.GetValueOrDefault(nt) : 0;
+                var maskMap = ShowTextures && ShowNormalMaps && section.MaskTexture is { } mt ? _textures.GetValueOrDefault(mt) : 0;
+                gl.ActiveTexture(Gl.TEXTURE0 + 2);
+                gl.BindTexture(Gl.TEXTURE_2D, normalMap != 0 ? normalMap : _whiteTexture);
+                gl.ActiveTexture(Gl.TEXTURE0 + 3);
+                gl.BindTexture(Gl.TEXTURE_2D, maskMap != 0 ? maskMap : _whiteTexture);
+                gl.ActiveTexture(Gl.TEXTURE0);
+                gl.Uniform(hasNormalMap, normalMap != 0 ? 1 : 0);
+                gl.Uniform(hasMaskMap, maskMap != 0 ? 1 : 0);
+                var layout = section.MaskLayout;
+                gl.Uniform(maskLayout, layout.Roughness, layout.Metallic, layout.Occlusion);
                 gl.BindTexture(Gl.TEXTURE_2D, texture != 0 ? texture : _whiteTexture);
                 gl.Uniform(hasTexture, texture != 0 ? 1 : 0);
                 var c = Wireframe ? new Vector3(0.85f, 0.87f, 0.92f) : section.Color;
@@ -480,8 +581,11 @@ public sealed class ModelViewport : OpenGlControlBase
         if (Wireframe) gl.PolygonMode(Gl.FRONT_AND_BACK, Gl.FILL);
         gl.BindVertexArray(0);
         gl.BindTexture(Gl.TEXTURE_2D, 0);
-        gl.ActiveTexture(Gl.TEXTURE0 + 1);
-        gl.BindTexture(Gl.TEXTURE_2D, 0);
+        for (var unit = 1; unit <= 3; unit++)
+        {
+            gl.ActiveTexture(Gl.TEXTURE0 + unit);
+            gl.BindTexture(Gl.TEXTURE_2D, 0);
+        }
         gl.ActiveTexture(Gl.TEXTURE0);
     }
 

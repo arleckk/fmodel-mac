@@ -26,11 +26,14 @@ namespace FModelMac.Rendering;
 /// </summary>
 /// <param name="maxTextureSize">FModel's Preview Max Texture Size.</param>
 /// <param name="platform">The game's texture platform (Settings › General), for console cooks.</param>
-public sealed class ViewerLoadContext(int maxTextureSize = 1024, ETexturePlatform platform = ETexturePlatform.DesktopMobile)
+/// <param name="detailTextureSize">Largest normal map / mask size (maps keep them smaller than the color textures).</param>
+public sealed class ViewerLoadContext(int maxTextureSize = 1024, ETexturePlatform platform = ETexturePlatform.DesktopMobile,
+    int? detailTextureSize = null)
 {
     public int MaxTextureSize { get; } = maxTextureSize;
+    public int DetailTextureSize { get; } = detailTextureSize ?? maxTextureSize;
     public ETexturePlatform Platform { get; } = platform;
-    internal readonly ConcurrentDictionary<string, Lazy<(ViewerTexture? Texture, Vector3 Color)>> Materials = new(StringComparer.OrdinalIgnoreCase);
+    internal readonly ConcurrentDictionary<string, Lazy<ViewerMaterial>> Materials = new(StringComparer.OrdinalIgnoreCase);
     internal readonly ConcurrentDictionary<string, Lazy<ViewerTexture?>> Textures = new(StringComparer.OrdinalIgnoreCase);
     // Landscapes: layer colors, the diffuse textures of a landscape material, and textures' average colors
     internal readonly ConcurrentDictionary<string, Lazy<Vector3>> LayerColors = new(StringComparer.OrdinalIgnoreCase);
@@ -71,8 +74,14 @@ public sealed partial class ViewerSection : ObservableObject
     [ObservableProperty] private string _materialName = "";
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(Details))] private ViewerTexture? _texture;
     [ObservableProperty] private Vector3 _color = new(0.62f);
+    /// <summary>Tangent-space normal map (UE's: X right, Y along V, Z out), if the material has one.</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(Details))] private ViewerTexture? _normalTexture;
+    /// <summary>Packed roughness / metallic / occlusion mask, read through <see cref="MaskLayout"/>.</summary>
+    [ObservableProperty] private ViewerTexture? _maskTexture;
+    [ObservableProperty] private MaskLayout _maskLayout = MaskLayout.None;
 
-    public string Details => Texture is { } t ? $"{t.Name} ({t.Width}×{t.Height})" : "No diffuse texture";
+    public string Details => (Texture is { } t ? $"{t.Name} ({t.Width}×{t.Height})" : "No diffuse texture") +
+                             (NormalTexture is not null ? " · normal map" : "") + (MaskTexture is not null ? $" · {MaskLayout}" : "");
 
     [ObservableProperty] private bool _isVisible = true;
 
@@ -84,11 +93,69 @@ public sealed partial class ViewerSection : ObservableObject
         MaterialName = material.Name;
         Texture = material.Texture;
         Color = material.Color;
+        NormalTexture = material.Normal;
+        MaskTexture = material.Masks;
+        MaskLayout = material.Layout;
     }
 }
 
-/// <summary>What the viewer draws of a material: its name, diffuse texture (if any) and color.</summary>
-public sealed record ViewerMaterial(string Name, ViewerTexture? Texture, Vector3 Color);
+/// <summary>What the viewer draws of a material: its name, diffuse texture (if any), color, normal map and masks.</summary>
+public sealed record ViewerMaterial(string Name, ViewerTexture? Texture, Vector3 Color, ViewerTexture? Normal = null,
+    ViewerTexture? Masks = null, MaskLayout Layout = default);
+
+/// <summary>
+/// Which channel (0–3 for R, G, B, A; -1 for none) of a packed mask texture holds roughness, metallic and ambient
+/// occlusion. Games pack them differently (ORM, MRA, SRXO, Fortnite's SpecularMasks…), so it comes from the
+/// texture's or the parameter's name; an unknown packing isn't used at all.
+/// </summary>
+public readonly record struct MaskLayout(int Roughness, int Metallic, int Occlusion)
+{
+    public static readonly MaskLayout None = new(-1, -1, -1);
+    public bool IsNone => Roughness < 0 && Metallic < 0 && Occlusion < 0;
+
+    private static readonly Regex Token = new(@"(?:^|[_ \-])([A-Z]{2,5})$", RegexOptions.Compiled);
+    private static readonly Regex Single = new(@"(?:^|[_ \-])(Roughness|Metallic|Metalness|AO|Occlusion|AmbientOcclusion)$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    public static MaskLayout? FromNames(string? parameter, string texture)
+    {
+        // A suffix spelling the channels: T_Rock_ORM, T_Sand_ORH, T_Grass_RMA, T_Skin_SRXO, Base_MRAO, MSRAO…
+        // or naming a single one (T_Cliff_Roughness, T_Wall_AO), read from red
+        foreach (var name in new[] { texture, parameter })
+        {
+            if (name is not null && Single.Match(name.Trim()) is { Success: true } single)
+                return single.Groups[1].Value.ToUpperInvariant() switch
+                {
+                    "ROUGHNESS" => new MaskLayout(0, -1, -1),
+                    "METALLIC" or "METALNESS" => new MaskLayout(-1, 0, -1),
+                    _ => new MaskLayout(-1, -1, 0)
+                };
+            if (name is null || Token.Match(name.Trim()) is not { Success: true } match) continue;
+            var letters = match.Groups[1].Value.Replace("AO", "O"); // MRAO: metallic, roughness, occlusion
+            if (letters.Any(c => "ORMASHXEBC".IndexOf(c) < 0) || !letters.Any(c => c is 'R' or 'M')) continue;
+            int r = -1, m = -1, a = -1;
+            for (var i = 0; i < letters.Length; i++)
+            {
+                switch (letters[i])
+                {
+                    case 'R': r = i; break;
+                    case 'M': m = i; break;
+                    case 'O' or 'A': a = i; break;
+                }
+            }
+            return new MaskLayout(r, m, a);
+        }
+        // Fortnite's SpecularMasks parameter, what FModel's shader reads: specular, metallic, roughness. Not CUE4Parse's
+        // PM_SpecularMasks guess nor a bare "_S" texture: other games pack those differently (DSR's are roughness-first)
+        if (string.Equals(parameter, "SpecularMasks", StringComparison.OrdinalIgnoreCase))
+            return new MaskLayout(2, 1, -1);
+        return null;
+    }
+
+    public override string ToString() => IsNone ? "no masks"
+        : string.Join("", new[] { (Roughness, "R"), (Metallic, "M"), (Occlusion, "O") }.Where(c => c.Item1 >= 0).OrderBy(c => c.Item1)
+            .Select(c => c.Item2)) + " masks";
+}
 
 /// <summary>
 /// CPU side of a mesh for the viewer: LOD 0 converted to a Y-up right-handed space
@@ -96,10 +163,12 @@ public sealed record ViewerMaterial(string Name, ViewerTexture? Texture, Vector3
 /// </summary>
 public sealed class ViewerModel
 {
-    public const int FloatsPerVertex = 8; // position, normal, uv
+    public const int FloatsPerVertex = 12; // position, normal, uv, tangent (xyz + binormal sign)
     public const int FloatsPerSkin = 8;   // 4 bone indices, 4 weights
 
     private static readonly Regex DiffuseName = new(CMaterialParams2.RegexDiffuse, RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex NormalName = new(CMaterialParams2.RegexNormals, RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex LikelyDiffuse = new("base|color|colour|albedo|diff|main", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     public required string Name { get; init; }
     public required string Kind { get; init; }
@@ -200,7 +269,8 @@ public sealed class ViewerModel
             foreach (var (a, b) in new[] { (0f, 0f), (1f, 0f), (1f, 1f), (0f, 1f) })
             {
                 var p = (n + (a * 2 - 1) * u + (b * 2 - 1) * v) * 50 + new Vector3(0, 50, 0); // resting on the ground grid
-                vertices.AddRange([p.X, p.Y, p.Z, n.X, n.Y, n.Z, a, b]);
+                // UE's binormal is -cross(N, T)·sign in this mirrored space: the sign makes it point along +V
+                vertices.AddRange([p.X, p.Y, p.Z, n.X, n.Y, n.Z, a, b, u.X, u.Y, u.Z, -Vector3.Dot(Vector3.Cross(n, u), v)]);
             }
             // Counter-clockwise seen from outside
             var ccw = Vector3.Dot(Vector3.Cross(u, v), n) > 0;
@@ -217,7 +287,8 @@ public sealed class ViewerModel
             [
                 new ViewerSection
                 {
-                    FirstIndex = 0, IndexCount = indices.Count, MaterialName = resolved.Name, Texture = resolved.Texture, Color = resolved.Color
+                    FirstIndex = 0, IndexCount = indices.Count, MaterialName = resolved.Name, Texture = resolved.Texture, Color = resolved.Color,
+                    NormalTexture = resolved.Normal, MaskTexture = resolved.Masks, MaskLayout = resolved.Layout
                 }
             ],
             LodCount = 1,
@@ -227,12 +298,9 @@ public sealed class ViewerModel
     }
 
     /// <summary>The diffuse texture and color the viewer uses for a material.</summary>
-    public static ViewerMaterial ResolveMaterial(UMaterialInterface material, ViewerLoadContext context)
-    {
-        var (texture, color) = context.Materials.GetOrAdd(material.GetPathName(),
-            _ => new Lazy<(ViewerTexture?, Vector3)>(() => ResolveMaterial(material, context, new Vector3(0.62f)))).Value;
-        return new ViewerMaterial(material.Name, texture, color);
-    }
+    public static ViewerMaterial ResolveMaterial(UMaterialInterface material, ViewerLoadContext context) =>
+        context.Materials.GetOrAdd(material.GetPathName(),
+            _ => new Lazy<ViewerMaterial>(() => ResolveMaterial(material, context, new Vector3(0.62f)))).Value;
 
     // UE5 desktop cooks strip the morph deltas from UMorphTarget and keep them only in the mesh's GPU
     // buffers; CUE4Parse decodes them back on demand, as its exporter does
@@ -348,6 +416,10 @@ public sealed class ViewerModel
             var position = new Vector3(v.Position.X, v.Position.Z, v.Position.Y);
             var normal = new Vector3(v.Normal.X, v.Normal.Z, v.Normal.Y);
             if (normal.LengthSquared() > 1e-8f) normal = Vector3.Normalize(normal);
+            var tangent = new Vector3(v.Tangent.X, v.Tangent.Z, v.Tangent.Y);
+            if (tangent.LengthSquared() > 1e-8f) tangent = Vector3.Normalize(tangent);
+            // The binormal's sign: UE keeps it in TangentZ.W (Nanite and some others in TangentX.W)
+            var sign = Math.Abs(v.Normal.W) > 0.5f ? MathF.Sign(v.Normal.W) : Math.Abs(v.Tangent.W) > 0.5f ? MathF.Sign(v.Tangent.W) : 1f;
 
             min = Vector3.Min(min, position);
             max = Vector3.Max(max, position);
@@ -361,6 +433,10 @@ public sealed class ViewerModel
             vertices[o + 5] = normal.Z;
             vertices[o + 6] = v.Uv.U;
             vertices[o + 7] = v.Uv.V;
+            vertices[o + 8] = tangent.X;
+            vertices[o + 9] = tangent.Y;
+            vertices[o + 10] = tangent.Z;
+            vertices[o + 11] = sign;
         }
 
         var sections = new List<ViewerSection>();
@@ -374,14 +450,17 @@ public sealed class ViewerModel
             var material = overrides is not null && section.MaterialIndex < overrides.Length && overrides[section.MaterialIndex] is { IsNull: false } o
                 ? o
                 : slot?.Material;
-            var (texture, color) = ResolveMaterial(material, context);
+            var resolved = ResolveMaterial(material, context);
             sections.Add(new ViewerSection
             {
                 FirstIndex = section.FirstIndex,
                 IndexCount = count,
                 MaterialName = material?.Name ?? slot?.SlotName ?? $"Section {sections.Count}",
-                Texture = texture,
-                Color = texture is null && untexturedColor is { } terrain ? terrain : color
+                Texture = resolved.Texture,
+                NormalTexture = resolved.Normal,
+                MaskTexture = resolved.Masks,
+                MaskLayout = resolved.Layout,
+                Color = resolved.Texture is null && untexturedColor is { } terrain ? terrain : resolved.Color
             });
         }
 
@@ -398,41 +477,71 @@ public sealed class ViewerModel
         };
     }
 
-    private static (ViewerTexture? Texture, Vector3 Color) ResolveMaterial(FPackageIndex? index, ViewerLoadContext context)
+    private static ViewerMaterial ResolveMaterial(FPackageIndex? index, ViewerLoadContext context)
     {
-        var fallback = new Vector3(0.62f);
-        if (index is null || !index.TryLoad<UMaterialInterface>(out var material)) return (null, fallback);
-        return context.Materials.GetOrAdd(material.GetPathName(),
-            _ => new Lazy<(ViewerTexture?, Vector3)>(() => ResolveMaterial(material, context, fallback))).Value;
+        if (index is null || !index.TryLoad<UMaterialInterface>(out var material)) return new ViewerMaterial("", null, new Vector3(0.62f));
+        return ResolveMaterial(material, context);
     }
 
-    private static (ViewerTexture? Texture, Vector3 Color) ResolveMaterial(UMaterialInterface material, ViewerLoadContext context, Vector3 fallback)
+    private static ViewerMaterial ResolveMaterial(UMaterialInterface material, ViewerLoadContext context, Vector3 fallback)
     {
         try
         {
             var parameters = new CMaterialParams2();
             material.GetParams(parameters, EMaterialDepth.TopLayerOnly);
 
+            var normal = parameters.GetTextures(CMaterialParams2.Normals[0]).FirstOrDefault()
+                         ?? Fallback(parameters, CMaterialParams2.FallbackNormals)
+                         ?? parameters.GetTexturesByRegex(NormalName).FirstOrDefault();
+
+            // The packed masks, with the parameter's name: it often tells the packing when the texture's doesn't.
+            // Known parameter names first, then any parameter or texture named after its channels (MSRAO, T_X_ORM…)
+            var all = parameters.Textures.Select(p => (Name: p.Key, Texture: p.Value.TryLoad<UTexture>(out var t) ? t : null))
+                .Where(p => p.Texture is not null).Select(p => (p.Name, Texture: p.Texture!)).ToList();
+            // A normal map is never the masks, even when a parameter says so (DSR's PM_SpecularMasks = T_Rock_N)
+            var masks = all.Where(p => p.Texture != normal && !NormalName.IsMatch(p.Texture.Name)).ToList();
+            var (maskName, mask) = CMaterialParams2.SpecularMasks[0].Append(CMaterialParams2.FallbackSpecularMasks)
+                .Select(name => masks.FirstOrDefault(p => p.Name == name))
+                .FirstOrDefault(p => p.Texture is not null);
+            var layout = mask is null ? null : MaskLayout.FromNames(maskName, mask.Name);
+            if (layout is null && masks.FirstOrDefault(p => MaskLayout.FromNames(p.Name, p.Texture.Name) is not null) is { Texture: not null } named)
+            {
+                (maskName, mask) = named;
+                layout = MaskLayout.FromNames(maskName, mask.Name);
+            }
+
+            // Diffuse: the known names, then any color (sRGB) texture that isn't the normal map or the masks
+            // ("BaseTexture", "MainTex"…), preferring names that say so; the legacy parameters last
             var texture = parameters.GetTextures(CMaterialParams2.Diffuse[0]).FirstOrDefault()
-                          ?? (parameters.Textures.TryGetValue(CMaterialParams2.FallbackDiffuse, out var fb) && fb.TryLoad<UTexture>(out var t) ? t : null)
+                          ?? Fallback(parameters, CMaterialParams2.FallbackDiffuse)
                           ?? parameters.GetTexturesByRegex(DiffuseName).FirstOrDefault()
+                          ?? all.Where(p => p.Texture.SRGB && p.Texture != normal && p.Texture != mask)
+                              .OrderByDescending(p => LikelyDiffuse.IsMatch(p.Name))
+                              .Select(p => p.Texture).FirstOrDefault()
                           ?? LegacyDiffuse(material);
 
             var color = parameters.Colors.TryGetValue(CMaterialParams2.DiffuseColors[0].FirstOrDefault(parameters.Colors.ContainsKey) ?? "", out var c)
                 ? new Vector3(c.R, c.G, c.B)
                 : fallback;
 
-            if (texture is null) return (null, color);
-            var decoded = context.Textures.GetOrAdd(texture.GetPathName(),
-                _ => new Lazy<ViewerTexture?>(() => Decode(texture, context.MaxTextureSize, context.Platform))).Value;
-            return (decoded, color);
+            return new ViewerMaterial(material.Name, Decoded(texture, context, context.MaxTextureSize), color,
+                Decoded(normal, context, context.DetailTextureSize),
+                layout is null ? null : Decoded(mask, context, context.DetailTextureSize), layout ?? MaskLayout.None);
         }
         catch (Exception e)
         {
             Serilog.Log.Warning(e, "Could not resolve material {Material}", material.GetPathName());
-            return (null, fallback);
+            return new ViewerMaterial(material.Name, null, fallback);
         }
     }
+
+    private static UTexture? Fallback(CMaterialParams2 parameters, string name) =>
+        parameters.Textures.TryGetValue(name, out var value) && value.TryLoad<UTexture>(out var texture) ? texture : null;
+
+    private static ViewerTexture? Decoded(UTexture? texture, ViewerLoadContext context, int maxSize) => texture is null
+        ? null
+        : context.Textures.GetOrAdd($"{texture.GetPathName()}@{maxSize}",
+            _ => new Lazy<ViewerTexture?>(() => Decode(texture, maxSize, context.Platform))).Value;
 
     // Older/mobile materials sometimes only expose their textures through the first-generation parameters
     private static UTexture? LegacyDiffuse(UMaterialInterface material)

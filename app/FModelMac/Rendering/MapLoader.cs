@@ -183,7 +183,7 @@ public static class MapLoader
         }
 
         // Convert each distinct mesh once, a few at a time
-        context = new ViewerLoadContext(Math.Min(context?.MaxTextureSize ?? 512, 512), context?.Platform ?? ETexturePlatform.DesktopMobile);
+        context = new ViewerLoadContext(Math.Min(context?.MaxTextureSize ?? 512, 512), context?.Platform ?? ETexturePlatform.DesktopMobile, 256);
         var models = new ConcurrentDictionary<string, ViewerModel>(StringComparer.OrdinalIgnoreCase);
         var done = 0;
         var failed = 0;
