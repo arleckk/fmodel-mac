@@ -5,6 +5,7 @@ using CUE4Parse.FileProvider;
 using CUE4Parse.FileProvider.Objects;
 using CUE4Parse.MappingsProvider.Usmap;
 using CUE4Parse.UE4.IO;
+using CUE4Parse.UE4.Localization;
 using CUE4Parse.UE4.Objects.Core.Misc;
 using CUE4Parse.UE4.Versions;
 using CUE4Parse.UE4.VirtualFileSystem;
@@ -12,12 +13,15 @@ using Serilog;
 
 namespace FModelMac.Services;
 
+public sealed record LocalizationResult(string Culture, int Count, string[] Available, bool Loaded);
+
 public sealed record LoadOptions(
     string ArchiveDir,
     EGame Game,
     string? AesKey,
     IReadOnlyDictionary<string, string> DynamicKeys,
-    string? UsmapPath);
+    string? UsmapPath,
+    VersioningSettings? Versioning = null);
 
 public sealed class FolderInfo
 {
@@ -67,7 +71,7 @@ public sealed class GameArchive : IDisposable
         var sw = Stopwatch.StartNew();
         progress.Report("Loading game archives");
         var provider = new DefaultFileProvider(options.ArchiveDir, SearchOption.AllDirectories,
-            new VersionContainer(options.Game), StringComparer.OrdinalIgnoreCase);
+            (options.Versioning ?? new VersioningSettings()).CreateContainer(options.Game), StringComparer.OrdinalIgnoreCase);
         try
         {
             if (!string.IsNullOrWhiteSpace(options.UsmapPath))
@@ -158,6 +162,59 @@ public sealed class GameArchive : IDisposable
             else
                 Log.Warning("Native Oodle not found at {Path}, using the managed decompressor", path);
         }
+    }
+
+    /// <summary>
+    /// Loads the localized texts (FText) for a language, like FModel's LoadLocalizedResources. CUE4Parse maps the
+    /// language to a culture code per game; when the game has no folder for that exact code (es vs es-ES),
+    /// the closest culture it does ship is used.
+    /// </summary>
+    /// <summary>
+    /// FModel's packages language. CUE4Parse only switches to cultures the game declares (CulturesToStage in its ini, or
+    /// the .locmeta), so a game that doesn't declare them gets its .locres loaded here instead. Engine strings are left
+    /// out, like CUE4Parse does.
+    /// </summary>
+    public LocalizationResult LoadLocalization(ELanguage language, bool includeEngine = false)
+    {
+        var locres = Provider.Files.Values
+            .Where(f => f.Extension.Equals("locres", StringComparison.OrdinalIgnoreCase) &&
+                        (includeEngine || !f.Path.StartsWith("Engine/", StringComparison.OrdinalIgnoreCase)))
+            .Select(f => (File: f, Culture: f.Path.Split('/') is { Length: >= 3 } parts ? parts[^2] : null))
+            .Where(f => f.Culture is not null).ToArray();
+        var available = Provider.Internationalization.AvailableCultures.Concat(locres.Select(f => f.Culture!))
+            .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+        var wanted = Provider.GetLanguageCode(language);
+        var culture = available.FirstOrDefault(c => c.Equals(wanted, StringComparison.OrdinalIgnoreCase))
+                      ?? available.FirstOrDefault(c => c.Split('-')[0].Equals(wanted.Split('-')[0], StringComparison.OrdinalIgnoreCase))
+                      ?? wanted;
+
+        if (!includeEngine && Provider.TryChangeCulture(culture))
+            return new LocalizationResult(culture, Provider.Internationalization.Count, available, true);
+
+        var files = locres.Where(f => f.Culture!.Equals(culture, StringComparison.OrdinalIgnoreCase)).Select(f => f.File).ToArray();
+        var entries = new Dictionary<string, IDictionary<string, string>>();
+        foreach (var file in files)
+        {
+            try
+            {
+                if (!file.TryCreateReader(out var archive)) continue;
+                using (archive)
+                {
+                    foreach (var (ns, values) in new FTextLocalizationResource(archive).Entries)
+                    {
+                        if (!entries.TryGetValue(ns.Str, out var target)) entries[ns.Str] = target = new Dictionary<string, string>();
+                        foreach (var (key, value) in values) target[key.Str] = value.LocalizedString;
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Log.Warning(e, "Could not read {Path}", file.Path);
+            }
+        }
+        Provider.Internationalization.Clear();
+        Provider.Internationalization.Override(entries);
+        return new LocalizationResult(culture, Provider.Internationalization.Count, available, files.Length > 0);
     }
 
     public void Dispose() => Provider.Dispose();

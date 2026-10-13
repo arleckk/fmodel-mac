@@ -157,7 +157,8 @@ public sealed partial class MainViewModel : ObservableObject
         {
             await RefreshAesAsync();
             var usmap = await ResolveMappingsAsync();
-            var options = new LoadOptions(Settings.ArchiveDir!, game, Settings.AesKey, Settings.DynamicKeys, usmap);
+            var versioning = Settings.CurrentVersioning;
+            var options = new LoadOptions(Settings.ArchiveDir!, game, Settings.AesKey, Settings.DynamicKeys, usmap, versioning);
             var progress = new Progress<string>(label => StatusLabel = label);
             _archive = await Task.Run(() => GameArchive.Load(options, progress));
             _sounds = new SoundExtractor(_archive.Provider, Settings.ArchiveDir!);
@@ -172,6 +173,12 @@ public sealed partial class MainViewModel : ObservableObject
                 Log(LogKind.Warning, $"{_archive.LockedCount} archive(s) need an AES key, see Directory > AES");
             if (total == 0)
                 Log(LogKind.Warning, $"No archives found in '{Settings.ArchiveDir}'");
+            if (versioning.PlatformValue != ETexturePlatform.DesktopMobile || versioning.HasOverrides)
+                Log(LogKind.Information, $"Versioning: {versioning.PlatformValue} textures" +
+                                         $"{(versioning.CustomVersions is { Count: > 0 } cv ? $", {cv.Count} custom version(s)" : "")}" +
+                                         $"{(versioning.Options is { Count: > 0 } o ? $", {o.Count} option override(s)" : "")}" +
+                                         $"{(versioning.MapStructTypes is { Count: > 0 } m ? $", {m.Count} map struct type override(s)" : "")}");
+            await LoadLocalizationAsync();
 
             StatusExtra = $"{game} · {_archive.MountedCount}/{total} archives";
             UpdateTitle();
@@ -208,6 +215,34 @@ public sealed partial class MainViewModel : ObservableObject
         SaveSettings();
         Log(LogKind.Information, $"{name} detected: using FModel's {name} endpoints for AES keys and mappings (Settings › Endpoints)");
         return true;
+    }
+
+    /// <summary>FModel's LoadLocalizedResources: the localized texts packages show, in Settings › Packages Language.</summary>
+    public async Task LoadLocalizationAsync()
+    {
+        if (_archive is not { } archive) return;
+        var language = Settings.AssetLanguageValue;
+        StatusLabel = "Loading localized resources";
+        try
+        {
+            var result = await Task.Run(() => archive.LoadLocalization(language));
+            var name = language.GetDescription();
+            if (result.Available.Length == 0)
+                Log(LogKind.Information, "This game has no localized resources (.locres)");
+            else if (!result.Loaded || result.Count == 0)
+            {
+                var others = result.Available.Where(c => !c.Equals(result.Culture, StringComparison.OrdinalIgnoreCase)).ToArray();
+                Log(LogKind.Warning, $"No localized texts for '{name}' ({result.Culture})" +
+                                     (others.Length > 0 ? $"; this game has {string.Join(", ", others)}" : " outside the engine's"));
+            }
+            else
+                Log(LogKind.Information, $"{result.Count:N0} localized resources loaded for '{name}' ({result.Culture})");
+        }
+        catch (Exception e)
+        {
+            Serilog.Log.Warning(e, "Could not load localization for {Language}", language);
+            Log(LogKind.Warning, $"Could not load localized resources: {e.Message}");
+        }
     }
 
     /// <summary>FModel's RefreshAes: the AES endpoint replaces the saved keys when it answers with valid ones.</summary>

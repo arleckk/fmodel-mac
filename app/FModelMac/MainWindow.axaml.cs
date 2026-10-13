@@ -171,7 +171,8 @@ public partial class MainWindow : Window
         if (await dialog.ShowDialog<bool>(this))
         {
             Vm.SaveSettings();
-            if (dialog.RequiresReload) await Vm.InitializeGameAsync();
+            if (dialog.RequiresReload) await Vm.InitializeGameAsync(); // also loads the localization
+            else if (dialog.LanguageChanged) await Vm.LoadLocalizationAsync();
         }
     }
 

@@ -90,8 +90,17 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
   y limpiar.
 - **Barra de estado** que cambia de color según el estado.
 - **Diálogos:** Directory Selector, AES Manager (clave estática y dinámicas por GUID), Settings
-  (carpeta de salida, formato de mallas, abrir mallas en el visor, audio, endpoints, mappings),
-  Search y About.
+  (pestañas General, Models, Audio y Endpoints), Search y About.
+- **Versiones del motor (Settings › General):** UE Version, Texture Platform y los tres editores de
+  versioning de FModel (Custom Versions, Options, MapStructTypes). Se guardan por carpeta del juego
+  y se pasan a CUE4Parse en el `VersionContainer`. A diferencia de FModel, los editores de Options y
+  MapStructTypes arrancan con los valores efectivos de CUE4Parse para esa versión y sólo guardan lo
+  que cambias. Cambiar cualquiera de estos vuelve a montar el juego al dar OK.
+- **Idioma (Packages Language):** el idioma de los textos localizados (FText). Si el juego no tiene
+  esa cultura exacta usa la más parecida (`es-MX` → `es`). CUE4Parse sólo cambia a culturas que el
+  juego declara (`CulturesToStage` o `.locmeta`); si no las declara, la app carga los `.locres` del
+  juego por su cuenta. Como en CUE4Parse, los textos de Engine no se cargan. Cambiar sólo el idioma
+  recarga los textos sin volver a montar.
 - **Endpoints (Settings › Endpoints):** como en FModel, una URL que devuelve JSON más una expresión
   JSONPath. El de AES da la llave principal y, opcionalmente, la lista de llaves dinámicas
   (`guid`/`key`); el de mappings, la URL del `.usmap`/`.jmap` y opcionalmente su nombre. Cada vez
@@ -148,6 +157,9 @@ dotnet run -- --audio ./out <carpeta Paks> GAME_UE4_25 <AES|-> Game/Content/.../
 dotnet run -- --audio-ui ./out <carpeta Paks> GAME_UE4_25 <AES|-> Game/Content/.../Sonido.uasset
 # Prueba los endpoints de AES y mappings (presets de uedb.dev), la caché y el editor
 dotnet run -- --endpoints ./out
+# Monta con versioning e idioma propios, verifica que lleguen a CUE4Parse, cambia de idioma y
+# captura Settings › General y el editor de Options
+dotnet run -- --versioning ./out <carpeta Paks> GAME_UE4_25 <AES|->
 # Decodifica un archivo de audio a float crudo (para comparar con ffmpeg)
 dotnet run -- --decode sonido.wav wav salida.f32
 # Imprime el JSON de paquetes (o --scan-morphs para listar mallas con morph targets)

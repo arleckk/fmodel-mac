@@ -1,4 +1,7 @@
 using System.Diagnostics;
+using CUE4Parse.UE4.Assets.Exports.Texture;
+using CUE4Parse.UE4.Objects.Core.Serialization;
+using CUE4Parse.UE4.Versions;
 using Newtonsoft.Json;
 using Serilog;
 
@@ -22,6 +25,27 @@ public sealed class AppSettings
         Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "FModelMac", "Output");
     public Dictionary<string, string> DynamicKeys { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public string LoadingMode { get; set; } = "All";
+
+    /// <summary>FModel's "Packages Language": the culture localized texts (FText) are read in.</summary>
+    public string AssetLanguage { get; set; } = nameof(ELanguage.English);
+
+    [JsonIgnore]
+    public ELanguage AssetLanguageValue => Enum.TryParse<ELanguage>(AssetLanguage, out var value) ? value : ELanguage.English;
+
+    /// <summary>Versioning configuration per game directory, like FModel's per-directory settings.</summary>
+    public Dictionary<string, VersioningSettings> Versioning { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The versioning of the current game directory (created on demand).</summary>
+    [JsonIgnore]
+    public VersioningSettings CurrentVersioning
+    {
+        get
+        {
+            var key = ArchiveDir ?? "";
+            if (!Versioning.TryGetValue(key, out var versioning)) Versioning[key] = versioning = new VersioningSettings();
+            return versioning;
+        }
+    }
 
     // FModel's endpoint configuration: AES keys refreshed and mappings downloaded each time the game is mounted.
     // A local mapping file (UsmapPath) wins over the mapping endpoint, like FModel's "Overwrite".
@@ -55,6 +79,7 @@ public sealed class AppSettings
     public double ImagePanelWidth { get; set; } = 360;
 
     // FModel saves properties and textures under Output/Exports, mirroring the package path
+    [JsonIgnore]
     public string ExportsDir => Path.Combine(OutputDir, "Exports");
 
     public static AppSettings Load()
@@ -82,4 +107,35 @@ public sealed class AppSettings
         var args = File.Exists(path) ? new[] { "-R", path } : [path];
         Process.Start(new ProcessStartInfo("open", args) { UseShellExecute = false });
     }
+}
+
+/// <summary>
+/// What CUE4Parse needs beyond the engine version to read a game correctly: the texture platform, custom versions
+/// for games that never serialize them, and overrides of its per-game options and map struct types.
+/// </summary>
+public sealed class VersioningSettings
+{
+    public string Platform { get; set; } = nameof(ETexturePlatform.DesktopMobile);
+    public List<FCustomVersion>? CustomVersions { get; set; }
+    public Dictionary<string, bool>? Options { get; set; }
+    public Dictionary<string, KeyValuePair<string, string>>? MapStructTypes { get; set; }
+
+    [JsonIgnore]
+    public ETexturePlatform PlatformValue => Enum.TryParse<ETexturePlatform>(Platform, out var value) ? value : ETexturePlatform.DesktopMobile;
+
+    [JsonIgnore]
+    public bool HasOverrides => CustomVersions is { Count: > 0 } || Options is { Count: > 0 } || MapStructTypes is { Count: > 0 };
+
+    public VersionContainer CreateContainer(EGame game) => new(game, PlatformValue,
+        customVersions: CustomVersions is { Count: > 0 } ? new FCustomVersionContainer(CustomVersions) : null,
+        optionOverrides: Options is { Count: > 0 } ? Options : null,
+        mapStructTypesOverrides: MapStructTypes is { Count: > 0 } ? MapStructTypes : null);
+
+    public VersioningSettings Clone() => new()
+    {
+        Platform = Platform,
+        CustomVersions = CustomVersions?.ToList(),
+        Options = Options is null ? null : new Dictionary<string, bool>(Options),
+        MapStructTypes = MapStructTypes is null ? null : new Dictionary<string, KeyValuePair<string, string>>(MapStructTypes)
+    };
 }

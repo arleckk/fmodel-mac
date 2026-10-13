@@ -138,6 +138,61 @@ if (args is ["--endpoints", var endpointsOut])
     return;
 }
 
+// "--versioning <outdir> <paks dir> <EGame> <aes|->" mounts with versioning overrides and a packages language,
+// checks they reach CUE4Parse, switches language, and renders Settings › General and the Options editor
+if (args is ["--versioning", var verOut, var verPaks, var verGame, var verAes])
+{
+    verOut = Path.GetFullPath(verOut);
+    Directory.CreateDirectory(verOut);
+    Environment.SetEnvironmentVariable("FMODELMAC_DATA_DIR", Path.Combine(verOut, "data"));
+    var verSettings = new AppSettings { ArchiveDir = verPaks, Game = verGame, AesKey = verAes == "-" ? null : verAes, AssetLanguage = "Spanish" };
+    verSettings.Versioning[verPaks] = new VersioningSettings
+    {
+        Platform = "NintendoSwitch",
+        Options = new Dictionary<string, bool> { ["MorphTarget"] = false },
+        CustomVersions = [new CUE4Parse.UE4.Objects.Core.Serialization.FCustomVersion { Key = new CUE4Parse.UE4.Objects.Core.Misc.FGuid(1, 2, 3, 4), Version = 7 }]
+    };
+    verSettings.Save();
+    RunOnUiThread(SnapshotApp.BuildAvaloniaApp(), async () =>
+    {
+        void Shot(TopLevel top, string name)
+        {
+            Dispatcher.UIThread.RunJobs();
+            AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+            top.CaptureRenderedFrame()?.Save(Path.Combine(verOut, name));
+            Console.WriteLine($"Saved {name}");
+        }
+        var vm = new MainViewModel();
+        Console.WriteLine($"settings reloaded: language {vm.Settings.AssetLanguage}, platform {vm.Settings.CurrentVersioning.Platform}, " +
+                          $"custom versions {vm.Settings.CurrentVersioning.CustomVersions?.Count}");
+        await vm.InitializeGameAsync();
+        var versions = vm.Archive!.Provider.Versions;
+        Console.WriteLine($"provider: {versions.Game}, platform {versions.Platform}, MorphTarget {versions["MorphTarget"]}, " +
+                          $"custom versions {versions.CustomVersions?.Versions.Length}, files {vm.Archive.Provider.Files.Count:N0}");
+        vm.Settings.AssetLanguage = "English";
+        await vm.LoadLocalizationAsync();
+        foreach (var log in vm.Logs) Console.WriteLine($"  log: {log.Kind} {log.Message}");
+        // the fallback loader, on the only .locres this game has (Engine's, which are normally left out)
+        var engine = vm.Archive.LoadLocalization(CUE4Parse.UE4.Versions.ELanguage.English, includeEngine: true);
+        var sample = vm.Archive.Provider.Internationalization.SelectMany(n => n.Value.Select(e => $"{n.Key}/{e.Key} = {e.Value}")).FirstOrDefault();
+        Console.WriteLine($"engine locres: {engine.Culture} {engine.Count:N0} entries from [{string.Join(", ", engine.Available)}], e.g. {sample}");
+        var unchanged = vm.Archive.LoadLocalization(CUE4Parse.UE4.Versions.ELanguage.Japanese, includeEngine: true);
+        Console.WriteLine($"japanese: {unchanged.Culture} loaded {unchanged.Loaded} count {unchanged.Count}");
+
+        var settings = new SettingsWindow(vm.Settings);
+        settings.Show();
+        await Task.Delay(300);
+        Shot(settings, "settings-general.png");
+        var editor = new VersioningEditorWindow(VersioningPart.Options, versions.Game, vm.Settings.CurrentVersioning.Clone());
+        editor.Show();
+        await Task.Delay(300);
+        Shot(editor, "versioning-options.png");
+        editor.Close();
+        settings.Close();
+    }, TimeSpan.FromMinutes(3));
+    return;
+}
+
 // "--decode <file> <format> <out.f32>" decodes one sound with AudioDecoder and writes raw float samples
 if (args is ["--decode", var decodeIn, var decodeFormat, var decodeOut])
 {
