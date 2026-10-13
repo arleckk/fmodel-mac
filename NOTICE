@@ -1,0 +1,52 @@
+FModelMac
+Copyright (C) 2026 arleckk
+
+FModelMac is an unofficial macOS port of FModel. It is not affiliated with or endorsed by the FModel
+authors, Epic Games, or the publishers of any game it can open. Unreal Engine is a trademark of
+Epic Games, Inc.
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU
+General Public License as published by the Free Software Foundation, either version 3 of the License,
+or (at your option) any later version (see LICENSE). It is distributed WITHOUT ANY WARRANTY.
+
+FModelMac is a derivative work of:
+
+- FModel (https://github.com/4sval/FModel) - Copyright (c) FModel contributors.
+  Licensed under the GNU General Public License v3.0.
+  FModelMac reimplements FModel's features and interface for macOS with Avalonia, and reuses its
+  resources: the icons in app/FModelMac/Assets/Icons, the syntax definitions in
+  app/FModelMac/Assets/Highlighting and the vector icons in app/FModelMac/Themes/Icons.axaml
+  (generated from FModel's Icons.xaml).
+
+It builds on, and modifies (patches/CUE4Parse.patch):
+
+- CUE4Parse and CUE4Parse-Conversion (https://github.com/FabianFG/CUE4Parse) - Copyright 2023
+  CUE4Parse Contributors. Licensed under the Apache License 2.0. The changes made for FModelMac are
+  the contents of patches/CUE4Parse.patch, applied on top of commit 3fc091a.
+
+Libraries used by the app (NuGet):
+
+- Avalonia, Avalonia.AvaloniaEdit (https://github.com/AvaloniaUI) - MIT License.
+- CommunityToolkit.Mvvm (https://github.com/CommunityToolkit/dotnet) - MIT License.
+- Newtonsoft.Json (https://github.com/JamesNK/Newtonsoft.Json) - MIT License.
+- NVorbis (https://github.com/NVorbis/NVorbis) - MIT License.
+- Serilog and its sinks (https://github.com/serilog/serilog) - Apache License 2.0.
+- SkiaSharp (https://github.com/mono/SkiaSharp), through Avalonia and CUE4Parse-Conversion - MIT License.
+- The dependencies of CUE4Parse listed in its own project files.
+
+Optional components built by app/packaging and bundled inside FModelMac.app (not in this repository):
+
+- vgmstream (https://github.com/vgmstream/vgmstream) - Copyright (c) 2008-2025 Adam Gashlin,
+  Fastelbja, Ronny Elfert, bnnm, et al. ISC-style license. Built with FFmpeg (LGPL-2.1-or-later,
+  built without GPL components), mpg123 (LGPL-2.1), libogg/libvorbis (BSD), Speex (BSD),
+  CELT (BSD) and LibAtrac9 (MIT), each under its own license.
+- unluac (https://sourceforge.net/projects/unluac/), FModel's build - Copyright (c) 2011-2020 tehtmi,
+  with portions Copyright (c) 2014 Thomas Klaeger. MIT License. Compiled with GraalVM Native Image
+  (its runtime is GPL-2.0 with the Classpath Exception).
+
+Oodle:
+
+- Oodle Data compression is proprietary software of Epic Games Tools (RAD Game Tools). Its source is
+  not part of this repository; scripts/setup-upstream.sh builds liboodle-data-shared.dylib locally from
+  WorkingRobot/OodleUE. Builds of FModelMac.app that contain that library are for personal use and
+  must not be redistributed.

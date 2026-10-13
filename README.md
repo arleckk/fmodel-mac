@@ -22,3 +22,17 @@ app/packaging/build-app.sh
 ```
 
 After changing anything under `upstream/CUE4Parse`, run `scripts/save-patches.sh` and commit the patch.
+
+## License and credits
+
+FModelMac is an **unofficial** port of [FModel](https://github.com/4sval/FModel). It is not affiliated
+with the FModel authors, Epic Games or any game publisher. As a derivative of FModel it is licensed
+under the **GNU GPL v3.0** (see [LICENSE](LICENSE)); third-party components and their licenses are
+listed in [NOTICE](NOTICE).
+
+- [FModel](https://github.com/4sval/FModel) (GPL-3.0): the features, interface and resources (icons,
+  syntax definitions) this port is based on.
+- [CUE4Parse](https://github.com/FabianFG/CUE4Parse) (Apache-2.0): reads the game files; our changes
+  are in `patches/CUE4Parse.patch`.
+- Oodle is proprietary (Epic Games Tools) and isn't in this repository; an app built with it is for
+  personal use and must not be redistributed.
