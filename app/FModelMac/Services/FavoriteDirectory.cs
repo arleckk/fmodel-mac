@@ -6,6 +6,12 @@ public sealed class FavoriteDirectory
     public string Header { get; set; } = "";
     public string Path { get; set; } = "";
 
+    /// <summary>The mounted game has no such folder (worked out when the list is shown, not saved).</summary>
+    [Newtonsoft.Json.JsonIgnore]
+    public bool IsMissing { get; set; }
+
+    public FavoriteDirectory Clone() => new(Header, Path);
+
     public FavoriteDirectory() { }
 
     public FavoriteDirectory(string header, string path)

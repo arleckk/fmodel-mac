@@ -56,10 +56,14 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
   `Output/Backups`, lista los tuyos (Show in Finder, Load New, Load Modified) y descarga los de
   FModel (su servicio, Fortnite). El backup se lee como stream: el de Fortnite 41.20 (6.7 millones
   de entradas, 43 MB) se compara en ~4 s con ~130 MB de memoria.
-- **Favorite Directories (Packages › Favorite Directories):** atajos a carpetas, guardados por
-  carpeta del juego, como en FModel: Add Directory… y, por cada uno, Go To / Edit Directory… /
-  Delete Directory. Go To carga los archives si hace falta y abre la carpeta en Folders. Al montar
-  un juego por primera vez se agregan los presets de FModel (Fortnite, VALORANT, Dead by Daylight).
+- **Favorite Directories (pestaña entre Archives y Folders, y Packages › Favorite Directories):**
+  atajos a carpetas, como en FModel. La pestaña los lista (los que no existen en el juego cargado se
+  ven atenuados); doble clic, Enter o el botón Go To abren la carpeta en Folders (cargando los
+  archives si hace falta), y sus botones y menú contextual agregan (desde la carpeta seleccionada),
+  editan, reordenan, copian la ruta o borran (también con Delete). Cada **perfil** guarda su propia
+  lista (Directory › Profiles): al cambiar de perfil cambian los favoritos; un perfil nuevo empieza
+  con la lista de su carpeta del juego, y al montar un juego por primera vez se agregan los presets
+  de FModel (Fortnite, VALORANT, Dead by Daylight).
   El árbol de Folders tiene menú contextual con "Export Folder", "Favorite Directory" y "Copy
   Directory Path"; el diálogo avisa si la carpeta no existe en el juego cargado.
 - **Export Folder** (clic derecho en una carpeta del árbol o del explorador, o un atajo de exportación

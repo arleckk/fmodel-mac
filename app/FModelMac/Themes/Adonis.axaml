@@ -1,5 +1,6 @@
 <Styles xmlns="https://github.com/avaloniaui"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:c="using:FModelMac.Controls">
     <!--
         AdonisUI "Dark" color scheme as used by FModel (App.xaml overrides Accent/Alert/Error),
         layered on top of Avalonia's Fluent theme so controls look like the original WPF app.
@@ -281,7 +282,7 @@
         <Setter Property="Padding" Value="0" />
         <Setter Property="ItemsPanel">
             <ItemsPanelTemplate>
-                <UniformGrid Rows="1" />
+                <c:FillTabPanel />
             </ItemsPanelTemplate>
         </Setter>
     </Style>

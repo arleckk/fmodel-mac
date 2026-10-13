@@ -22,6 +22,10 @@ public static class Converters
     // FModel hides (rather than collapses) the folder expander when there are no sub folders
     public static readonly IValueConverter VisibleOpacity = new FuncValueConverter<bool, double>(visible => visible ? 1 : 0);
 
+    // Favorite directories the mounted game doesn't have are dimmed
+    public static readonly IValueConverter MissingOpacity = new FuncValueConverter<bool, double>(missing => missing ? 0.45 : 1);
+    public static readonly IValueConverter FavoriteStatus = new FuncValueConverter<bool, string>(missing => missing ? "Not Found" : "Found");
+
     // The logger expander header gets a bottom margin once open
     public static readonly IValueConverter ExpanderHeaderMargin = new FuncValueConverter<bool, Avalonia.Thickness>(open =>
         open ? new Avalonia.Thickness(0, 0, 0, 5) : default);

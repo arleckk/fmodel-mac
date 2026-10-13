@@ -108,14 +108,14 @@ public partial class AssetExplorer : UserControl
             case ExplorerFile:
                 var files = vm.Explorer.SelectedFiles.ToList();
                 if (!files.Contains(entry)) files = [(ExplorerFile) entry];
-                vm.SelectedLeftTab = 2;
+                vm.SelectedLeftTab = MainViewModel.PackagesTab;
                 for (var i = 0; i < files.Count; i++) await vm.ExtractAsync(files[i].File, newTab: i > 0);
                 break;
             case ExplorerFolder folder:
                 var node = folder.Node;
                 while (node is { FolderCount: 1, PackageCount: 0 }) node = node.Children[0];
                 vm.NavigateToFolder(node.FullPath);
-                vm.SelectedLeftTab = 1;
+                vm.SelectedLeftTab = MainViewModel.FoldersTab;
                 break;
         }
     }
@@ -184,7 +184,7 @@ public partial class AssetExplorer : UserControl
         var packages = files.Where(f => f.File.IsUePackage).ToList();
         menu.Items.Add(Item("Extract in New Tab", "ExtractIcon", async () =>
         {
-            vm.SelectedLeftTab = 2;
+            vm.SelectedLeftTab = MainViewModel.PackagesTab;
             foreach (var file in files) await vm.ExtractAsync(file.File, newTab: true);
         }));
         menu.Items.Add(Item("Show Metadata", "InfoIcon", async () =>

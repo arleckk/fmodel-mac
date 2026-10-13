@@ -4,6 +4,7 @@
         xmlns:c="using:FModelMac.Controls"
         xmlns:v="using:FModelMac.Views"
         xmlns:local="using:FModelMac"
+        xmlns:svc="using:FModelMac.Services"
         xmlns:ae="using:AvaloniaEdit"
         x:Class="FModelMac.MainWindow"
         x:DataType="vm:MainViewModel"
@@ -213,6 +214,95 @@
                                 <TextBlock Text="No archives found in the specified directory" FontWeight="SemiBold"
                                            TextAlignment="Center" Foreground="{StaticResource AdonisErrorBrush}"
                                            IsVisible="{Binding !Archives.Count}" />
+                            </Panel>
+                        </DockPanel>
+                    </TabItem>
+
+                    <!-- Favorite Directories: the profile's shortcuts to folders of the game; double-click goes there -->
+                    <TabItem Header="Favorite Directories">
+                        <DockPanel Margin="8,8,8,0">
+                            <Grid DockPanel.Dock="Top" ColumnDefinitions="*,5,Auto">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <c:Glyph Data="{StaticResource DirectoriesIcon}" Width="16" Height="16" Margin="0,0,5,0" />
+                                    <TextBlock Text="{Binding Favorites.Count, StringFormat='{}{0} favorite directories'}" VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2" Orientation="Horizontal" IsEnabled="{Binding IsReady}">
+                                    <Button Classes="toolbar" ToolTip.Tip="Go To (double-click, Enter)" Click="OnGoToFavoriteClick"
+                                            IsEnabled="{Binding SelectedFavorite, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                        <c:Glyph Data="{StaticResource GoToIcon}" />
+                                    </Button>
+                                    <Button Classes="toolbar" ToolTip.Tip="Add Directory… (starts from the selected folder)" Click="OnAddFavoriteClick">
+                                        <c:Glyph Data="{StaticResource DirectoriesAddIcon}" />
+                                    </Button>
+                                    <Button Classes="toolbar" ToolTip.Tip="Edit Directory…" Click="OnEditFavoriteClick"
+                                            IsEnabled="{Binding SelectedFavorite, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                        <c:Glyph Data="{StaticResource EditIcon}" />
+                                    </Button>
+                                    <Button Classes="toolbar" ToolTip.Tip="Move Up" Tag="-1" Click="OnMoveFavoriteClick"
+                                            IsEnabled="{Binding SelectedFavorite, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                        <c:Glyph Data="{StaticResource ArrowIcon}" RenderTransform="rotate(180deg)" />
+                                    </Button>
+                                    <Button Classes="toolbar" ToolTip.Tip="Move Down" Tag="1" Click="OnMoveFavoriteClick"
+                                            IsEnabled="{Binding SelectedFavorite, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                        <c:Glyph Data="{StaticResource ArrowIcon}" />
+                                    </Button>
+                                    <Button Classes="toolbar" ToolTip.Tip="Delete Directory" Click="OnDeleteFavoriteClick"
+                                            IsEnabled="{Binding SelectedFavorite, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                        <c:Glyph Data="{StaticResource RemoveIcon}" />
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+                            <c:SectionSeparator DockPanel.Dock="Top" Margin="0,4,0,0" />
+                            <StackPanel DockPanel.Dock="Bottom" Margin="0,0,0,5">
+                                <c:SectionSeparator Text="INFORMATION" />
+                                <Grid Classes="info" ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto">
+                                    <TextBlock Text="{Binding SelectedFavorite.Path, FallbackValue='None'}" TextTrimming="CharacterEllipsis"
+                                               ToolTip.Tip="{Binding SelectedFavorite.Path, FallbackValue=''}" />
+                                    <TextBlock Grid.Column="1" Text="Path" />
+                                    <TextBlock Grid.Row="1" Text="{Binding SelectedFavorite.IsMissing, Converter={x:Static local:Converters.FavoriteStatus}, FallbackValue='None'}" />
+                                    <TextBlock Grid.Row="1" Grid.Column="1" Text="In This Game" />
+                                    <TextBlock Grid.Row="2" Text="{Binding FavoritesOwner}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Row="2" Grid.Column="1" Text="Saved In" />
+                                </Grid>
+                            </StackPanel>
+                            <Panel>
+                                <ListBox x:Name="FavoritesList" ItemsSource="{Binding Favorites}" SelectedItem="{Binding SelectedFavorite}"
+                                         DoubleTapped="OnFavoriteDoubleTapped">
+                                    <ListBox.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="Go To" Click="OnGoToFavoriteClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource GoToIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem Header="Edit Directory…" Click="OnEditFavoriteClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource EditIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem Header="Copy Directory Path" Click="OnCopyFavoritePathClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource CopyIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <Separator />
+                                            <MenuItem Header="Delete Directory" Click="OnDeleteFavoriteClick">
+                                                <MenuItem.Icon><c:Glyph Data="{StaticResource RemoveIcon}" /></MenuItem.Icon>
+                                            </MenuItem>
+                                        </ContextMenu>
+                                    </ListBox.ContextMenu>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate x:DataType="svc:FavoriteDirectory">
+                                            <Grid ColumnDefinitions="Auto,*" Margin="0,2" Background="Transparent" ToolTip.Tip="{Binding Path}"
+                                                  Opacity="{Binding IsMissing, Converter={x:Static local:Converters.MissingOpacity}}">
+                                                <Image Source="{StaticResource TreeFolderClosedImage}" Width="16" Height="14" Margin="0,0,6,0"
+                                                       VerticalAlignment="Center" />
+                                                <StackPanel Grid.Column="1">
+                                                    <TextBlock Text="{Binding Header}" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding Path}" Classes="dim" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <TextBlock Text="No favorite directories yet: add the selected folder with the + button, or right-click a folder in the Folders tab"
+                                           Classes="dim" TextWrapping="Wrap" TextAlignment="Center" Margin="10,20"
+                                           IsVisible="{Binding !Favorites.Count}" />
                             </Panel>
                         </DockPanel>
                     </TabItem>

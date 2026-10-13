@@ -1364,7 +1364,7 @@ async Task RunAsync()
     await ExplorerTestAsync(window, vm);
     await FolderExportTestAsync(window, vm);
 
-    vm.SelectedLeftTab = 2;
+    vm.SelectedLeftTab = MainViewModel.PackagesTab;
     vm.SelectedPackage = vm.Packages.First(p => p.Name == "T_Streaming.uasset");
     await vm.ExtractAsync(vm.SelectedPackage.File);
     Console.WriteLine($"Extract: {vm.StatusText} | tab '{vm.SelectedTab?.Header}' image {vm.SelectedTab?.HasImage} | {vm.PackagesHeader}");
@@ -1425,7 +1425,7 @@ async Task RunAsync()
     var presetsBefore = vm.Favorites.Count;
     vm.AddFavorite(new FavoriteDirectory("Textures", "CUE4ParseFixtures/Content/Fixtures/Textures/"));
     vm.AddFavorite(new FavoriteDirectory("Missing", "CUE4ParseFixtures/Content/Nope"));
-    vm.SelectedLeftTab = 0;
+    vm.SelectedLeftTab = MainViewModel.ArchivesTab;
     var found = await vm.GoToFolderAsync(vm.Favorites[^2].Path);
     var foundTab = vm.SelectedLeftTab;
     var missing = await vm.GoToFolderAsync(vm.Favorites[^1].Path);
@@ -1434,6 +1434,23 @@ async Task RunAsync()
     Console.WriteLine($"Favorites: {presetsBefore} preset(s) for this game, Fortnite {FavoriteDirectory.Presets("FortniteGame").Count}, " +
                       $"VALORANT {FavoriteDirectory.Presets("ShooterGame").Count} | go to '{vm.Favorites[^2].Path}': {found}, tab {foundTab}, " +
                       $"folder '{vm.SelectedFolder?.FullPath}' | missing: {missing} ({vm.Logs[^1].Message}) | saved {saved} | menu items {menu}");
+    // The Favorite Directories tab: listed with the missing one dimmed, saved in the profile, Enter goes to the folder
+    vm.SelectedLeftTab = MainViewModel.FavoritesTab;
+    vm.SelectedFavorite = vm.Favorites[^2];
+    Dispatcher.UIThread.RunJobs();
+    await Task.Delay(150);
+    Save(window, "14-favorites-tab.png");
+    var favoritesList = window.FindControl<ListBox>("FavoritesList")!;
+    window.Activate();
+    (favoritesList.ContainerFromItem(vm.SelectedFavorite!) ?? favoritesList).Focus();
+    Dispatcher.UIThread.RunJobs();
+    var focusedBefore = window.FocusManager?.GetFocusedElement()?.GetType().Name;
+    window.KeyPress(Key.Enter, RawInputModifiers.None);
+    window.KeyRelease(Key.Enter, RawInputModifiers.None);
+    for (var wait = 0; wait < 50 && vm.SelectedLeftTab != MainViewModel.FoldersTab; wait++) await Task.Delay(20);
+    var profileFavorites = AppSettings.Load() is var reloaded ? reloaded.ActiveProfile?.FavoriteDirectories : null;
+    Console.WriteLine($"Favorites tab: {vm.Favorites.Count} listed, missing [{string.Join(", ", vm.Favorites.Where(f => f.IsMissing).Select(f => f.Header))}], " +
+                      $"saved in {vm.FavoritesOwner} ({profileFavorites?.Count.ToString() ?? "none"}) | Enter on {focusedBefore} -> tab {vm.SelectedLeftTab}, folder '{vm.SelectedFolder?.FullPath}'");
     var favoriteDialog = new FavoriteDirectoryWindow(new FavoriteDirectory("Meshes", "CUE4ParseFixtures/Content/Fixtures/Meshes"), vm.FolderExists);
     favoriteDialog.Show();
     await Task.Delay(200);
@@ -1670,7 +1687,7 @@ async Task MinorSettingsTestAsync(MainWindow window, MainViewModel vm)
     }
     var packages = window.FindControl<ListBox>("PackagesList")!;
     vm.NavigateToFolder("CUE4ParseFixtures/Content/Fixtures/Textures");
-    vm.SelectedLeftTab = 2;
+    vm.SelectedLeftTab = MainViewModel.PackagesTab;
     Dispatcher.UIThread.RunJobs();
     packages.Focus();
     var tabs = vm.Tabs.Count;
@@ -1696,7 +1713,7 @@ async Task MinorSettingsTestAsync(MainWindow window, MainViewModel vm)
     Console.WriteLine($"Hotkeys: ⌘T +{added} tab | Q {index}->{left} | E ->{right} | ⌘W -{removed} tab | A ->{dirLeft} | D ->{dirRight} | " +
                       $"⌘A ->{cmdA} | A while typing ->{typing}");
     vm.Settings.Hotkeys.ExportProperties = new Hotkey(Key.P, KeyModifiers.Meta | KeyModifiers.Shift);
-    vm.SelectedLeftTab = 2;
+    vm.SelectedLeftTab = MainViewModel.PackagesTab;
     Dispatcher.UIThread.RunJobs();
     packages.SelectedItems!.Clear();
     var g8 = vm.Packages.First(p => p.Name == "T_G8.uasset");
@@ -1760,7 +1777,7 @@ async Task MinorSettingsTestAsync(MainWindow window, MainViewModel vm)
 async Task InputTestAsync(Window window, MainViewModel vm)
 {
     vm.Folders.CollapseAll();
-    vm.SelectedLeftTab = 1;
+    vm.SelectedLeftTab = MainViewModel.FoldersTab;
     Dispatcher.UIThread.RunJobs();
     await Task.Delay(100);
 
@@ -2044,7 +2061,7 @@ async Task FolderExportTestAsync(MainWindow window, MainViewModel vm)
 
     // ⌘⇧P (Export Properties, set by an earlier test) with the focus in the folder tree exports the folder
     vm.Settings.Hotkeys.ExportProperties = new Hotkey(Key.P, KeyModifiers.Meta | KeyModifiers.Shift);
-    vm.SelectedLeftTab = 1;
+    vm.SelectedLeftTab = MainViewModel.FoldersTab;
     var animations = vm.NavigateToFolder(root + "/Animations")!;
     await Task.Delay(100);
     window.FindControl<ListBox>("FolderList")!.Focus();

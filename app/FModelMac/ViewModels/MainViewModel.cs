@@ -79,6 +79,9 @@ public sealed partial class MainViewModel : ObservableObject, IAnimationSource
 
     [ObservableProperty] private string _loadingMode;
     [ObservableProperty] private ArchiveItem? _selectedArchive;
+    // The left panel's tabs, in order
+    public const int ArchivesTab = 0, FavoritesTab = 1, FoldersTab = 2, PackagesTab = 3;
+
     [ObservableProperty] private int _selectedLeftTab;
     [ObservableProperty] private string _packageSearchText = "";
     [ObservableProperty] private AssetItem? _selectedPackage;
@@ -378,31 +381,56 @@ public sealed partial class MainViewModel : ObservableObject, IAnimationSource
 
     // ---------- Favorite Directories (FModel's custom directories) ----------
 
-    /// <summary>The current game's favorite directories, as shown in Packages › Favorite Directories.</summary>
+    /// <summary>
+    /// The current game's favorite directories, as shown in the Favorite Directories tab and Packages › Favorite
+    /// Directories: the active profile's own list (each profile keeps its own), or the game directory's without one.
+    /// </summary>
     public ObservableCollection<FavoriteDirectory> Favorites { get; } = [];
 
-    // A game directory gets FModel's presets the first time it's mounted, then the list is the user's
+    [ObservableProperty] private FavoriteDirectory? _selectedFavorite;
+
+    /// <summary>Where the favorites are saved, for the tab's information.</summary>
+    public string FavoritesOwner => Settings.ActiveProfile is { } profile ? $"Profile '{profile.Name}'" : "This game directory";
+
+    // A profile's list starts as its game directory's (from before profiles had their own), or FModel's presets the
+    // first time a game is mounted; from then on it's the user's
     private void LoadFavorites(string projectName)
     {
         var key = Settings.ArchiveDir ?? "";
-        if (!Settings.FavoriteDirectories.TryGetValue(key, out var list))
+        var profile = Settings.ActiveProfile;
+        var list = profile?.FavoriteDirectories;
+        if (list is null)
         {
-            Settings.FavoriteDirectories[key] = list = FavoriteDirectory.Presets(projectName);
+            list = Settings.FavoriteDirectories.TryGetValue(key, out var directory)
+                ? directory.Select(f => f.Clone()).ToList()
+                : FavoriteDirectory.Presets(projectName);
+            if (profile is not null) profile.FavoriteDirectories = list;
+            Settings.FavoriteDirectories.TryAdd(key, list.Select(f => f.Clone()).ToList());
             SaveSettings();
         }
         Favorites.Clear();
-        foreach (var favorite in list) Favorites.Add(favorite);
+        foreach (var favorite in list) Favorites.Add(Checked(favorite));
+        OnPropertyChanged(nameof(FavoritesOwner));
     }
 
+    // Saved to the profile, and as the directory's latest list (what a new profile of the same game starts from)
     private void SaveFavorites()
     {
-        Settings.FavoriteDirectories[Settings.ArchiveDir ?? ""] = Favorites.ToList();
+        if (Settings.ActiveProfile is { } profile) profile.FavoriteDirectories = Favorites.ToList();
+        Settings.FavoriteDirectories[Settings.ArchiveDir ?? ""] = Favorites.Select(f => f.Clone()).ToList();
         SaveSettings();
+    }
+
+    private FavoriteDirectory Checked(FavoriteDirectory favorite)
+    {
+        favorite.IsMissing = _archive is not null && !FolderExists(favorite.Path);
+        return favorite;
     }
 
     public void AddFavorite(FavoriteDirectory favorite)
     {
-        Favorites.Add(favorite);
+        Favorites.Add(Checked(favorite));
+        SelectedFavorite = favorite;
         SaveFavorites();
         Log(LogKind.Information, $"Added '{favorite.Header}' to Favorite Directories");
     }
@@ -411,13 +439,29 @@ public sealed partial class MainViewModel : ObservableObject, IAnimationSource
     {
         var index = Favorites.IndexOf(old);
         if (index < 0) return;
-        Favorites[index] = updated;
+        Favorites[index] = Checked(updated);
+        SelectedFavorite = updated;
         SaveFavorites();
     }
 
     public void RemoveFavorite(FavoriteDirectory favorite)
     {
-        if (!Favorites.Remove(favorite)) return;
+        var index = Favorites.IndexOf(favorite);
+        if (index < 0) return;
+        Favorites.RemoveAt(index);
+        if (SelectedFavorite is null || SelectedFavorite == favorite)
+            SelectedFavorite = Favorites.Count == 0 ? null : Favorites[Math.Min(index, Favorites.Count - 1)];
+        SaveFavorites();
+    }
+
+    /// <summary>Moves a favorite up (-1) or down (+1) the list.</summary>
+    public void MoveFavorite(FavoriteDirectory favorite, int offset)
+    {
+        var index = Favorites.IndexOf(favorite);
+        var target = index + offset;
+        if (index < 0 || target < 0 || target >= Favorites.Count) return;
+        Favorites.Move(index, target);
+        SelectedFavorite = favorite;
         SaveFavorites();
     }
 
@@ -440,7 +484,7 @@ public sealed partial class MainViewModel : ObservableObject, IAnimationSource
             Log(LogKind.Warning, $"There is no folder '{path}' in the loaded archives");
             return false;
         }
-        SelectedLeftTab = 1;
+        SelectedLeftTab = FoldersTab;
         return true;
     }
 
@@ -516,7 +560,7 @@ public sealed partial class MainViewModel : ObservableObject, IAnimationSource
             IsExplorerVisible = Settings.NewAssetExplorer; // FModel's LoadCommand shows the explorer
             Log(LogKind.Information, $"Loaded {index.FileCount:N0} packages from " +
                                      $"{scope?.Count ?? archive.MountedCount} archive(s) in {sw.Elapsed.TotalSeconds:F2}s");
-            SelectedLeftTab = 1;
+            SelectedLeftTab = FoldersTab;
             SetStatus(StatusKind.Completed, "Completed");
         }
         catch (Exception e)
@@ -552,7 +596,7 @@ public sealed partial class MainViewModel : ObservableObject, IAnimationSource
             Log(LogKind.Information, $"Loaded {index.FileCount:N0} {(newFiles ? "new" : "modified")} packages in {sw.Elapsed.TotalSeconds:F2}s " +
                                      $"(backup of {comparison.BackupCount:N0} files: {comparison.New.Count:N0} new, " +
                                      $"{comparison.Modified.Count:N0} modified, {comparison.Removed:N0} removed)");
-            SelectedLeftTab = 1;
+            SelectedLeftTab = FoldersTab;
             SetStatus(StatusKind.Completed, "Completed");
             return comparison;
         }
@@ -642,7 +686,7 @@ public sealed partial class MainViewModel : ObservableObject, IAnimationSource
     {
         if (Folders.VisibleFolders.Count == 0) await Load(null);
         if (NavigateToFolder(file.Directory) is null) return;
-        SelectedLeftTab = 2;
+        SelectedLeftTab = PackagesTab;
         SelectedPackage = Packages.FirstOrDefault(p => p.File == file);
     }
 

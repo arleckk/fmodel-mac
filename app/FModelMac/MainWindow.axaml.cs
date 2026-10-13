@@ -29,6 +29,7 @@ public partial class MainWindow : Window
         // before a bubbling KeyDown handler would ever see them
         FolderList.AddHandler(KeyDownEvent, OnFolderKeyDown, RoutingStrategies.Tunnel);
         PackagesList.AddHandler(KeyDownEvent, OnPackageKeyDown, RoutingStrategies.Tunnel);
+        FavoritesList.AddHandler(KeyDownEvent, OnFavoritesKeyDown, RoutingStrategies.Tunnel);
         AddHandler(KeyDownEvent, OnHotkeyDown, RoutingStrategies.Tunnel);
         AddHandler(PointerPressedEvent, OnWindowPointerPressed, RoutingStrategies.Tunnel);
 
@@ -346,6 +347,60 @@ public partial class MainWindow : Window
         if (Vm.SelectedFolder is { } folder) Vm.AddFavorite(new FavoriteDirectory(folder.Name, folder.FullPath));
     }
 
+    // ---------- Favorite Directories tab ----------
+
+    private async void OnGoToFavoriteClick(object? sender, RoutedEventArgs e) => await GoToSelectedFavoriteAsync();
+
+    private async void OnFavoriteDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        if ((e.Source as Control)?.FindAncestorOfType<ListBoxItem>(includeSelf: true) is null) return;
+        await GoToSelectedFavoriteAsync();
+    }
+
+    private async void OnFavoritesKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            e.Handled = true;
+            await GoToSelectedFavoriteAsync();
+        }
+        else if (e.Key is Key.Delete or Key.Back && Vm.SelectedFavorite is { } favorite)
+        {
+            e.Handled = true;
+            Vm.RemoveFavorite(favorite);
+        }
+    }
+
+    // Opens the folder in the Folders tab (loading every archive first when nothing is loaded yet)
+    private async Task GoToSelectedFavoriteAsync()
+    {
+        if (Vm.SelectedFavorite is not { } favorite || !Vm.IsReady) return;
+        if (await Vm.GoToFolderAsync(favorite.Path) && Vm.SelectedFolder is { } folder)
+            Dispatcher.UIThread.Post(() => FolderList.ScrollIntoView(folder), DispatcherPriority.Background);
+    }
+
+    private async void OnAddFavoriteClick(object? sender, RoutedEventArgs e) => await EditFavoriteAsync(null);
+
+    private async void OnEditFavoriteClick(object? sender, RoutedEventArgs e)
+    {
+        if (Vm.SelectedFavorite is { } favorite) await EditFavoriteAsync(favorite);
+    }
+
+    private void OnMoveFavoriteClick(object? sender, RoutedEventArgs e)
+    {
+        if (Vm.SelectedFavorite is { } favorite && sender is Control { Tag: string offset }) Vm.MoveFavorite(favorite, int.Parse(offset));
+    }
+
+    private void OnDeleteFavoriteClick(object? sender, RoutedEventArgs e)
+    {
+        if (Vm.SelectedFavorite is { } favorite) Vm.RemoveFavorite(favorite);
+    }
+
+    private async void OnCopyFavoritePathClick(object? sender, RoutedEventArgs e)
+    {
+        if (Vm.SelectedFavorite is { } favorite && Clipboard is { } clipboard) await clipboard.SetTextAsync(favorite.Path);
+    }
+
     private async void OnExportFolderClick(object? sender, RoutedEventArgs e)
     {
         if (sender is MenuItem { Tag: string tag } && Enum.TryParse<FolderExport>(tag, out var kind) && Vm.SelectedFolder is { } folder)
@@ -472,7 +527,7 @@ public partial class MainWindow : Window
     private void OpenSelectedFolder()
     {
         if (Vm.SelectedFolder is not { } folder) return;
-        if (folder.HasPackages) Vm.SelectedLeftTab = 2;
+        if (folder.HasPackages) Vm.SelectedLeftTab = MainViewModel.PackagesTab;
         else Vm.Folders.Toggle(folder);
     }
 
@@ -568,7 +623,7 @@ public partial class MainWindow : Window
         else if (hotkeys.AssetLeftTab.IsTriggered(e)) SwitchTab(-1);
         else if (hotkeys.AssetRightTab.IsTriggered(e)) SwitchTab(1);
         else if (hotkeys.DirLeftTab.IsTriggered(e)) _vm.SelectedLeftTab = Math.Max(0, _vm.SelectedLeftTab - 1);
-        else if (hotkeys.DirRightTab.IsTriggered(e)) _vm.SelectedLeftTab = Math.Min(2, _vm.SelectedLeftTab + 1);
+        else if (hotkeys.DirRightTab.IsTriggered(e)) _vm.SelectedLeftTab = Math.Min(MainViewModel.PackagesTab, _vm.SelectedLeftTab + 1);
         else if (ExportHotkey(hotkeys, e) is { } export)
         {
             e.Handled = true;
@@ -586,7 +641,7 @@ public partial class MainWindow : Window
                 if (_vm.Explorer.SelectedFiles.Select(f => f.Item).ToArray() is { Length: > 0 } tiles) await export.ExecuteAsync(tiles);
                 foreach (var tile in _vm.Explorer.SelectedEntries.OfType<ExplorerFolder>().ToList()) await _vm.ExportFolderAsync(tile.Node, kind);
             }
-            else if (_vm.SelectedLeftTab == 2 && PackagesList.SelectedItems is { Count: > 0 } selected)
+            else if (_vm.SelectedLeftTab == MainViewModel.PackagesTab && PackagesList.SelectedItems is { Count: > 0 } selected)
                 await export.ExecuteAsync(selected.Cast<object>().ToArray());
             return;
         }
@@ -602,8 +657,8 @@ public partial class MainWindow : Window
             vm.IsExplorerVisible = true;
             return;
         }
-        if (vm.SelectedLeftTab == 2) vm.SelectedLeftTab = 1;
-        else if (vm.SelectedLeftTab == 1 && vm.SelectedFolder is { } folder && vm.Folders.Parent(folder) is { } parent) SelectFolder(parent);
+        if (vm.SelectedLeftTab == MainViewModel.PackagesTab) vm.SelectedLeftTab = MainViewModel.FoldersTab;
+        else if (vm.SelectedLeftTab == MainViewModel.FoldersTab && vm.SelectedFolder is { } folder && vm.Folders.Parent(folder) is { } parent) SelectFolder(parent);
     }
 
     // The mouse's back button, like FModel's BrowseBack

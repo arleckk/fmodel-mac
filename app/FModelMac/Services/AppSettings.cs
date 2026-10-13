@@ -301,6 +301,12 @@ public sealed class GameProfile
     public EndpointConfig? MappingEndpoint { get; set; }
     public string AssetLanguage { get; set; } = nameof(ELanguage.English);
 
+    /// <summary>
+    /// The profile's favorite directories (the Favorite Directories tab). Null until the profile is first mounted,
+    /// then started from its directory's list (or FModel's presets for the game).
+    /// </summary>
+    public List<FavoriteDirectory>? FavoriteDirectories { get; set; }
+
     public void CopyFrom(AppSettings settings)
     {
         ArchiveDir = settings.ArchiveDir;
