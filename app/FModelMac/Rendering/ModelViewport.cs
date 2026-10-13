@@ -253,6 +253,59 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
         }
         """;
 
+    // Effect sprites: a camera-facing quad from gl_VertexID (a 4-vertex strip), a flipbook frame of the texture
+    private const string SpriteVertex = """
+        #version 150
+        uniform mat4 uViewProjection;
+        uniform vec3 uCenter;
+        uniform vec3 uRight;
+        uniform vec3 uUp;
+        uniform float uRotation;
+        out vec2 vCorner;
+        void main()
+        {
+            vec2 corner = vec2((gl_VertexID & 1) == 0 ? -1.0 : 1.0, (gl_VertexID & 2) == 0 ? -1.0 : 1.0);
+            vCorner = corner;
+            float c = cos(uRotation), s = sin(uRotation);
+            vec2 turned = vec2(c * corner.x - s * corner.y, s * corner.x + c * corner.y);
+            gl_Position = uViewProjection * vec4(uCenter + uRight * turned.x + uUp * turned.y, 1.0);
+        }
+        """;
+
+    private const string SpriteFragment = """
+        #version 150
+        in vec2 vCorner;
+        uniform sampler2D uTexture;
+        uniform int uHasTexture;
+        uniform vec4 uFrame;     // flipbook cell: offset xy, size zw
+        uniform int uRound;      // no background of its own: fade out round
+        uniform vec3 uTint;
+        uniform float uOpacity;
+        out vec4 fragColor;
+        void main()
+        {
+            vec3 color;
+            if (uHasTexture == 1)
+            {
+                vec4 texel = texture(uTexture, uFrame.xy + (vCorner * vec2(0.5, -0.5) + 0.5) * uFrame.zw);
+                // Additive: black is nothing; a cut-out sprite's alpha also masks it
+                color = texel.rgb * texel.a;
+                // Soften the quad's edges so a texture that doesn't fade out to its border isn't a square: a flipbook's
+                // frames mostly do; a still picture (often meant for a mesh or a stretched trail) fades out round
+                bool still = uRound == 1 || uFrame.z > 0.999 && uFrame.w > 0.999;
+                color *= still
+                    ? 1.0 - smoothstep(0.55, 1.0, length(vCorner))
+                    : 1.0 - smoothstep(0.82, 1.0, max(abs(vCorner.x), abs(vCorner.y)));
+            }
+            else
+            {
+                float r = length(vCorner);
+                color = vec3(exp(-r * r * 5.0) * (1.0 - smoothstep(0.85, 1.0, r)));
+            }
+            fragColor = vec4(color * uTint * uOpacity, 1.0);
+        }
+        """;
+
     // AdonisUI Layer0 (#2A2B34) so the viewport blends with the rest of the app
     private static readonly Vector3 Background = new(0x2A / 255f, 0x2B / 255f, 0x34 / 255f);
     private static readonly Vector3 Accent = new(0x20 / 255f, 0x6B / 255f, 0xD4 / 255f);
@@ -275,6 +328,9 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
     private int _fbo, _colorRb, _depthRb, _fboWidth, _fboHeight, _samples;
     private readonly Dictionary<SceneObject, GpuObject> _objects = [];
     private readonly Dictionary<ViewerTexture, int> _textures = [];
+    // Effect textures come and go with the animation's notifies, apart from the scene's
+    private readonly Dictionary<ViewerTexture, int> _effectTextures = [];
+    private int _spriteProgram, _spriteVao;
     private int _whiteTexture;   // keeps the samplers valid for untextured sections
     private int _boneTexture;
 
@@ -369,6 +425,8 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
             _meshProgram = gl.CompileProgram(MeshVertex, MeshFragment,
                 "aPosition", "aNormal", "aUv", "aBones", "aWeights", "aModel0", "aModel1", "aModel2", "aModel3", "aTangent");
             _lineProgram = gl.CompileProgram(LineVertex, LineFragment, "aPosition", "aColor");
+            _spriteProgram = gl.CompileProgram(SpriteVertex, SpriteFragment);
+            _spriteVao = gl.GenVertexArray();
             _samples = Math.Min(4, gl.GetInteger(Gl.MAX_SAMPLES));
             _whiteTexture = CreateTexture(gl, 1, 1, [255, 255, 255, 255]);
             _boneTexture = gl.GenTexture();
@@ -398,6 +456,9 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
         gl.DeleteBuffer(_gridVbo);
         gl.DeleteVertexArray(_linesVao);
         gl.DeleteBuffer(_linesVbo);
+        gl.DeleteVertexArray(_spriteVao);
+        foreach (var id in _effectTextures.Values) gl.DeleteTexture(id);
+        _effectTextures.Clear();
         gl.DeleteTexture(_whiteTexture);
         gl.DeleteTexture(_boneTexture);
         gl.DeleteProgram(_meshProgram);
@@ -437,6 +498,7 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
 
         DrawScene(gl, viewProjection, eye);
         if (ShowGrid && _gridVertexCount > 0) DrawGrid(gl, viewProjection);
+        DrawEffects(gl, view, viewProjection);
         DrawOverlays(gl, viewProjection);
 
         if (_fbo != 0)
@@ -806,6 +868,7 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
             var center = MarkerPosition(marker);
             var placement = marker.Object.Instances[0];
             var size = Math.Max(marker.Object.Model.Radius * 0.06f, 1f) * new Vector3(placement.M11, placement.M12, placement.M13).Length();
+            if (ShowsSprites(marker)) size *= 0.35f; // the effect itself shows where it is
             foreach (var axis in new[] { Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ, Vector3.Normalize(new Vector3(1, 1, 1)), Vector3.Normalize(new Vector3(-1, 1, 1)) })
                 line(center - axis * size, center + axis * size, marker.Color);
 
@@ -815,6 +878,101 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
                 : new Point((clip.X / clip.W * 0.5 + 0.5) * Bounds.Width, (0.5 - clip.Y / clip.W * 0.5) * Bounds.Height)));
         }
         if (MarkersProjected is { } handler) Dispatcher.UIThread.Post(() => handler(projected));
+    }
+
+    private bool ShowsSprites(EffectMarker marker) => _spriteProgram != 0 && marker.Effect is { Layers.Length: > 0 };
+
+    // How a layer grows, turns and fades over the effect's life (Age / Life in 0..1): a few seeded variations so
+    // the layers of one effect don't sit exactly on top of each other
+    private static (float Scale, float Opacity, float Rotation) Envelope(float t, int layer)
+    {
+        var seed = layer * 2.399f; // golden angle
+        var fadeIn = Math.Clamp(t / 0.08f, 0, 1);
+        var fadeOut = 1 - Math.Clamp((t - 0.55f) / 0.45f, 0, 1);
+        var scale = 0.55f + 0.6f * MathF.Sqrt(Math.Clamp(t, 0, 1)) * (0.8f + 0.4f * (MathF.Sin(seed * 3.1f) * 0.5f + 0.5f));
+        var spin = (layer % 2 == 0 ? 1 : -1) * (0.4f + layer * 0.15f);
+        return (scale, fadeIn * fadeOut * fadeOut, seed + spin * t);
+    }
+
+    /// <summary>
+    /// The effects of the active markers as additive sprites at their sockets: each emitter's material picture,
+    /// flipbooks played over the effect's life. Depth tested against the scene but not written, so they overlap.
+    /// </summary>
+    private void DrawEffects(Gl gl, Matrix4x4 view, Matrix4x4 viewProjection)
+    {
+        var markers = _effectMarkers.Where(ShowsSprites).ToArray();
+        if (markers.Length == 0) return;
+
+        var needed = markers.SelectMany(m => m.Effect!.Layers).Select(l => l.Texture).OfType<ViewerTexture>().ToHashSet();
+        foreach (var texture in needed.Where(t => !_effectTextures.ContainsKey(t)))
+        {
+            var id = CreateTexture(gl, texture.Width, texture.Height, texture.Rgba);
+            gl.TexParameter(Gl.TEXTURE_2D, Gl.TEXTURE_WRAP_S, Gl.CLAMP_TO_EDGE);
+            gl.TexParameter(Gl.TEXTURE_2D, Gl.TEXTURE_WRAP_T, Gl.CLAMP_TO_EDGE);
+            _effectTextures[texture] = id;
+        }
+        if (_effectTextures.Count > 96)
+            foreach (var unused in _effectTextures.Keys.Where(t => !needed.Contains(t)).ToList())
+            {
+                gl.DeleteTexture(_effectTextures[unused]);
+                _effectTextures.Remove(unused);
+            }
+
+        var right = new Vector3(view.M11, view.M21, view.M31);
+        var up = new Vector3(view.M12, view.M22, view.M32);
+        gl.Enable(Gl.BLEND);
+        gl.BlendFunc(Gl.ONE, Gl.ONE);
+        gl.DepthMask(false);
+        gl.UseProgram(_spriteProgram);
+        gl.UniformMatrix(gl.UniformLocation(_spriteProgram, "uViewProjection"), viewProjection);
+        gl.Uniform(gl.UniformLocation(_spriteProgram, "uTexture"), 0);
+        int center = gl.UniformLocation(_spriteProgram, "uCenter"), rightAxis = gl.UniformLocation(_spriteProgram, "uRight"),
+            upAxis = gl.UniformLocation(_spriteProgram, "uUp"), rotation = gl.UniformLocation(_spriteProgram, "uRotation"),
+            hasTexture = gl.UniformLocation(_spriteProgram, "uHasTexture"), frame = gl.UniformLocation(_spriteProgram, "uFrame"),
+            tint = gl.UniformLocation(_spriteProgram, "uTint"), opacity = gl.UniformLocation(_spriteProgram, "uOpacity"),
+            round = gl.UniformLocation(_spriteProgram, "uRound");
+        gl.ActiveTexture(Gl.TEXTURE0);
+        gl.BindVertexArray(_spriteVao);
+
+        foreach (var marker in markers)
+        {
+            var position = MarkerPosition(marker);
+            var placement = marker.Object.Instances[0];
+            var scale = new Vector3(placement.M11, placement.M12, placement.M13).Length();
+            var t = marker.Life > 0 ? Math.Clamp(marker.Age / marker.Life, 0, 1) : 0;
+            gl.Uniform(center, position.X, position.Y, position.Z);
+            var layers = marker.Effect!.Layers;
+            for (var i = 0; i < layers.Length; i++)
+            {
+                var layer = layers[i];
+                var (grow, fade, angle) = Envelope(t, i);
+                if (fade <= 0.002f) continue;
+                var half = layer.Size * scale * grow;
+                gl.Uniform(rightAxis, right.X * half, right.Y * half, right.Z * half);
+                gl.Uniform(upAxis, up.X * half, up.Y * half, up.Z * half);
+                // A flipbook plays its frames once over the life; a still picture just turns
+                var frames = layer.Columns * layer.Rows;
+                var animated = frames > 1;
+                gl.Uniform(rotation, animated ? 0 : angle);
+                var index = animated ? Math.Min((int) (t * frames), frames - 1) : 0;
+                gl.Uniform(frame, (float) (index % layer.Columns) / layer.Columns, (float) (index / layer.Columns) / layer.Rows,
+                    1f / layer.Columns, 1f / layer.Rows);
+                var texture = layer.Texture is { } lt ? _effectTextures.GetValueOrDefault(lt) : 0;
+                gl.Uniform(hasTexture, texture != 0 ? 1 : 0);
+                gl.Uniform(round, layer.Round ? 1 : 0);
+                gl.BindTexture(Gl.TEXTURE_2D, texture != 0 ? texture : _whiteTexture);
+                gl.Uniform(tint, layer.Tint.X, layer.Tint.Y, layer.Tint.Z);
+                // Many layers stacked add up: keep the sum from washing out to white
+                gl.Uniform(opacity, fade * (texture != 0 ? 0.85f : 0.6f) / MathF.Sqrt(Math.Max(1, layers.Length / 2f)));
+                gl.DrawArrays(Gl.TRIANGLE_STRIP, 0, 4);
+            }
+        }
+
+        gl.BindVertexArray(0);
+        gl.BindTexture(Gl.TEXTURE_2D, 0);
+        gl.DepthMask(true);
+        gl.BlendFunc(Gl.SRC_ALPHA, Gl.ONE_MINUS_SRC_ALPHA);
+        gl.Disable(Gl.BLEND);
     }
 
     private static int CreateTexture(Gl gl, int width, int height, byte[] rgba)
@@ -1185,7 +1343,10 @@ public sealed class ModelViewport : OpenGlControlBase, ICustomHitTest
 }
 
 /// <summary>An effect shown while its notify plays: a star at the socket's bone (offset by the socket) of an object.</summary>
-public sealed record EffectMarker(SceneObject Object, int Bone, Matrix4x4 Local, string Label, Vector3 Color);
+/// <param name="Effect">The effect's look, drawn as sprites (null: still loading, or not an effect).</param>
+/// <param name="Age">Seconds since it spawned, of <paramref name="Life"/>.</param>
+public sealed record EffectMarker(SceneObject Object, int Bone, Matrix4x4 Local, string Label, Vector3 Color,
+    ViewerEffect? Effect = null, float Age = 0, float Life = 1);
 
 /// <summary>FModel's camera modes: Arcball (orbit around a target) and Fly Cam (move and look like in a game).</summary>
 public enum CameraMode

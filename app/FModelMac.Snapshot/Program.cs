@@ -683,6 +683,23 @@ if (args is ["--json", var jsonPaks, var jsonGame, var jsonAes, ..])
                     Console.WriteLine($"      [{n.Kind}] {n.Description}{attach} | {n.AssetPath}");
                 }
                 firstSound ??= notifies.FirstOrDefault(n => n.Kind == FModelMac.Rendering.NotifyKind.Sound)?.AssetPath;
+                if (Environment.GetEnvironmentVariable("FMODELMAC_EFFECTS") is not null)
+                    foreach (var path in notifies.Where(n => n.Kind == FModelMac.Rendering.NotifyKind.Effect).Select(n => n.AssetPath).OfType<string>().Distinct().Take(6))
+                    {
+                        var effect = await vm.LoadEffectAsync(path);
+                        Console.WriteLine($"      effect {path.Split('.')[^1]}: {(effect is null ? "not read" : $"{effect.Layers.Length} layer(s)")}");
+                        foreach (var layer in effect?.Layers ?? [])
+                        {
+                            var channels = "";
+                            if (layer.Texture is { } tx)
+                            {
+                                var mins = new int[] { 255, 255, 255, 255 }; var maxs = new int[4];
+                                for (var i = 0; i < tx.Rgba.Length; i++) { mins[i % 4] = Math.Min(mins[i % 4], tx.Rgba[i]); maxs[i % 4] = Math.Max(maxs[i % 4], tx.Rgba[i]); }
+                                channels = $" rgba min {string.Join("/", mins)} max {string.Join("/", maxs)}";
+                            }
+                            Console.WriteLine($"        {layer.Name}: {(layer.Texture is { } t ? $"{t.Name} {t.Width}x{t.Height}" : "glow")} tint {layer.Tint} flipbook {layer.Columns}x{layer.Rows} size {layer.Size:0}{channels}");
+                        }
+                    }
             }
             catch (Exception e)
             {
@@ -994,6 +1011,13 @@ async Task ViewerTestAsync(string outputDir, string[] packages)
             viewer.Pause();
             var notifies = viewer.Motion is ViewerAnimation va ? va.Notifies : [];
             Console.WriteLine($"{entry.Kind} {entry.Name}: {error ?? "playing"} · {notifies.Length} notify(s)");
+            foreach (var n in notifies) Console.WriteLine($"  [{n.Kind}] {n.Description}");
+            // Wait for the notifies' effects to be read, so the captures show them
+            foreach (var effectPath in notifies.Where(n => n.Kind == NotifyKind.Effect).Select(n => n.AssetPath).OfType<string>().Distinct())
+            {
+                var effect = await viewer.AnimationSource!.LoadEffectAsync(effectPath);
+                Console.WriteLine($"  effect {effectPath.Split('/')[^1]}: {(effect is null ? "unreadable" : string.Join(", ", effect.Layers.Select(l => $"{l.Name}{(l.Texture is null ? " (glow)" : $" {l.Columns}x{l.Rows}")}")))}");
+            }
             continue;
         }
         if (package.StartsWith("seek:"))
@@ -1002,7 +1026,7 @@ async Task ViewerTestAsync(string outputDir, string[] packages)
             viewer.Seek(seconds);
             await Capture($"seek-{seconds:0.00}");
             await Task.Delay(150);
-            Console.WriteLine($"t={viewer.AnimationTime:0.00}s markers: {string.Join("; ", viewer.MarkerLabelPositions.Select(m => $"{m.Label} @ {(m.Position is { } p ? $"{p.X:0},{p.Y:0}" : "off-screen")}"))}");
+            Console.WriteLine($"t={viewer.AnimationTime:0.00}s {viewer.EffectLayersShown} effect layer(s), markers: {string.Join("; ", viewer.MarkerLabelPositions.Select(m => $"{m.Label} @ {(m.Position is { } p ? $"{p.X:0},{p.Y:0}" : "off-screen")}"))}");
             continue;
         }
         if (package.StartsWith("play:"))

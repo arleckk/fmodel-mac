@@ -15,6 +15,7 @@ public interface IAnimationSource
         IProgress<double>? indexProgress, CancellationToken ct);
     Task<Rendering.IViewerMotion> LoadMotionAsync(GameFile file);
     Task<Audio.PcmAudio?> DecodeNotifySoundAsync(string path);
+    Task<Rendering.ViewerEffect?> LoadEffectAsync(string path);
 }
 
 /// <summary>An animation asset found for a skeleton.</summary>

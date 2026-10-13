@@ -154,8 +154,16 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
   sólo por su evento se busca como paquete de ese nombre (o `_Cue`). Los montages incluyen los
   notifies de las secuencias que reproducen. Con **Sounds** los sonidos suenan sincronizados
   (SoundWave, SoundCue, Wwise, etc., por el mismo extractor del Audio Player); con **Effects** cada
-  efecto activo se marca con una estrella y su nombre en su socket mientras dura. Las partículas en
-  sí no se dibujan (Niagara corre scripts compilados que habría que interpretar).
+  efecto activo se dibuja en su socket con su nombre, mientras dura (al menos 1.2 s). Es una
+  **aproximación**: no se simula el sistema (Niagara corre scripts compilados), sino que cada emisor
+  (renderer sprite, ribbon o mesh de Niagara; `ParticleModuleRequired` de Cascade) se dibuja como
+  un sprite aditivo de cara a la cámara con la textura principal de su material, flipbooks
+  (`SubImageSize` / `SubImages_*`) animados a lo largo de la vida del efecto, crecimiento, giro y
+  fundido; el tamaño sale de los bounds fijos del emisor o del sistema. Las texturas de color sin
+  fondo propio se combinan con la de opacidad del material (o se desvanecen en círculo); los
+  materiales de distorsión no se dibujan y los placeholders (`DefaultTexture`, `T_White`) son un
+  brillo suave. Los colores de las partículas los calcula el VM de Niagara, así que una textura en
+  gris toma el color del material o, si no tiene, uno por el nombre del efecto (fire, ice, thunder…).
   Con una malla con esqueleto abierta, doble clic en una animación (secuencia, montage o
   composite) también la reproduce: play/pausa, barra de tiempo, velocidad, bucle y root motion opcional.
   Los **blend spaces** (1D y 2D) muestran un slider por eje y mezclan sus muestras con la
@@ -324,7 +332,8 @@ dotnet run -- --export-options ./out <carpeta Paks> GAME_UE4_25 <AES|-> Game/Con
 dotnet run -- --export <carpeta Paks> GAME_UE4_25 <AES> ./out 3
 # Abre el visor 3D real (OpenGL, necesita la pantalla encendida) y guarda capturas: mallas,
 # animaciones/blend spaces sobre la última malla, "morph:<nombre|*>=<peso>" para los sliders y
-# "anims", "anim:<nombre>", "seek:<seg>" y "play:<seg>" (lista de animaciones, notifies, marcadores y sonidos),
+# "anims", "anim:<nombre>", "seek:<seg>" y "play:<seg>" (lista de animaciones, notifies con sus efectos leídos,
+# capas de efecto dibujadas, marcadores y sonidos),
 # "normalmaps:off|on", "mode:orbit|fly", "key:W[+Shift]=<seg>" (mantiene la tecla y dice cuánto se movió la
 # cámara), "slider:SpeedX|SpeedY|SpeedZ|Rotation=<multiplicador>", "drag:dx,dy" y "hittest"; revisa el marco tangente, con FMODELMAC_MASKS=N lista las máscaras de un
 # mapa y captura un acercamiento al landscape con y sin texturas
@@ -343,6 +352,7 @@ dotnet run -- --decode sonido.wav wav salida.f32
 # Imprime el JSON de paquetes (o --scan-morphs para listar mallas con morph targets)
 dotnet run -- --json <carpeta Paks> GAME_UE4_25 <AES|-> Game/Content/.../Paquete.uasset
 # Animaciones de una malla con esqueleto (búsqueda por referencias) y sus notifies; decodifica el primer sonido
+# (FMODELMAC_ANIMS=N limita cuántas; FMODELMAC_EFFECTS=1 lista las capas de cada efecto con sus canales)
 dotnet run -- --json <carpeta Paks> GAME_UE4_25 <AES|-> --animations Game/Content/.../Malla.uasset
 # Parámetros de un material (texturas con promedio ± desviación por canal, colores, escalares)
 dotnet run -- --json <carpeta Paks> GAME_UE4_25 <AES|-> --material Game/Content/.../MI_Algo.uasset

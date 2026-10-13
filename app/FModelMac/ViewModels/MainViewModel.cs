@@ -39,6 +39,7 @@ public sealed partial class MainViewModel : ObservableObject, IAnimationSource
     private SoundExtractor? _sounds;
     private AnimationLibrary? _animations;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Task<PcmAudio?>> _notifySounds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Task<ViewerEffect?>> _notifyEffects = new(StringComparer.OrdinalIgnoreCase);
 
     public AppSettings Settings { get; } = AppSettings.Load();
     public string Version { get; } = typeof(MainViewModel).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
@@ -371,6 +372,7 @@ public sealed partial class MainViewModel : ObservableObject, IAnimationSource
         _archive = null;
         _animations = null;
         _notifySounds.Clear();
+        _notifyEffects.Clear();
         StatusExtra = "";
     }
 
@@ -981,6 +983,28 @@ public sealed partial class MainViewModel : ObservableObject, IAnimationSource
         catch (Exception e)
         {
             Serilog.Log.Warning(e, "Could not decode the notify sound {Sound}", path);
+            return null;
+        }
+    }
+
+    /// <summary>A notify's particle system (Niagara or Cascade) as the viewer approximates it, read once and kept.</summary>
+    public Task<ViewerEffect?> LoadEffectAsync(string path) => _notifyEffects.GetOrAdd(path, p => Task.Run(() => LoadEffect(p)));
+
+    private ViewerEffect? LoadEffect(string path)
+    {
+        if (_archive is not { } archive || _animations is not { } library) return null;
+        try
+        {
+            if (library.PackageOf(path) is not { } file) return null;
+            var objectName = path.Contains('.') ? path[(path.LastIndexOf('.') + 1)..] : file.NameWithoutExtension;
+            var exports = AssetPreview.LoadExports(archive.Provider, file);
+            var system = exports.FirstOrDefault(e => e.Name.Equals(objectName, StringComparison.OrdinalIgnoreCase))
+                         ?? exports.FirstOrDefault(e => e.ExportType is "NiagaraSystem" or "ParticleSystem");
+            return system is null ? null : EffectReader.Read(system, new ViewerLoadContext(256, Settings.CurrentVersioning.PlatformValue));
+        }
+        catch (Exception e)
+        {
+            Serilog.Log.Warning(e, "Could not read the effect {Effect}", path);
             return null;
         }
     }

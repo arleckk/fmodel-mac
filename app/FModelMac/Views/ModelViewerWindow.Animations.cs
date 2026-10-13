@@ -24,6 +24,8 @@ public partial class ModelViewerWindow
 
     // An instant notify's effect (or sound) stays marked this long, so it can be seen
     private const float MarkerSeconds = 0.6f;
+    // An instant notify's effect plays at least this long (its particles live on after the notify)
+    private const float EffectSeconds = 1.2f;
 
     private readonly OneShotPlayer _notifySounds = new();
     private CancellationTokenSource? _animationSearch;
@@ -33,6 +35,9 @@ public partial class ModelViewerWindow
     private AnimationEntry? _playingEntry;
     private bool _fillingAnimations;
     private ViewerNotify[] _notifies = [];
+
+    /// <summary>How many effect sprite layers the viewport draws now (test harness).</summary>
+    public int EffectLayersShown => Viewport.EffectMarkers.Sum(m => m.Effect?.Layers.Length ?? 0);
 
     /// <summary>The loaded game, to list, play and voice the animations of a mesh (the main window sets it).</summary>
     public IAnimationSource? AnimationSource { get; set; }
@@ -190,6 +195,14 @@ public partial class ModelViewerWindow
         if (AnimationSource is { } source)
             foreach (var path in _notifies.Where(n => n.Kind == NotifyKind.Sound).Select(n => n.AssetPath).OfType<string>().Distinct())
                 _ = source.DecodeNotifySoundAsync(path);
+        // And read the effects, showing each as soon as it's ready
+        if (AnimationSource is { } effects)
+            foreach (var path in _notifies.Where(n => n.Kind == NotifyKind.Effect).Select(n => n.AssetPath).OfType<string>().Distinct())
+            {
+                var loading = effects.LoadEffectAsync(path);
+                if (!loading.IsCompleted)
+                    loading.ContinueWith(_ => Dispatcher.UIThread.Post(UpdateEffectMarkers), TaskScheduler.Default);
+            }
         UpdateEffectMarkers();
     }
 
@@ -249,11 +262,21 @@ public partial class ModelViewerWindow
         var markers = new List<EffectMarker>();
         foreach (var notify in _notifies)
         {
-            if (notify.Kind == NotifyKind.Other || time < notify.Time || time > notify.Time + Math.Max(notify.Duration, MarkerSeconds)) continue;
+            if (notify.Kind == NotifyKind.Other) continue;
+            var life = Math.Max(notify.Duration, notify.Kind == NotifyKind.Effect ? EffectSeconds : MarkerSeconds);
+            if (time < notify.Time || time > notify.Time + life) continue;
             var (bone, local) = (notify.Socket is { } socket ? obj.Model.FindAttachPoint(socket) : null) ?? (0, Matrix4x4.Identity);
             var label = notify.Kind == NotifyKind.Sound ? $"♪ {notify.Asset}" : notify.Asset ?? notify.Name;
             if (markers.Any(m => m.Label == label && m.Bone == bone)) continue;
-            markers.Add(new EffectMarker(obj, bone, local, label, notify.Kind == NotifyKind.Sound ? SoundColor : EffectColor));
+            // The effect's look once read (still loading, or unreadable: just the marker)
+            ViewerEffect? effect = null;
+            if (notify.Kind == NotifyKind.Effect && notify.AssetPath is { } path && AnimationSource is { } source)
+            {
+                var loading = source.LoadEffectAsync(path);
+                if (loading.IsCompletedSuccessfully) effect = loading.Result;
+            }
+            markers.Add(new EffectMarker(obj, bone, local, label, notify.Kind == NotifyKind.Sound ? SoundColor : EffectColor,
+                effect, time - notify.Time, life));
         }
         Viewport.EffectMarkers = markers;
     }

@@ -10,15 +10,15 @@ internal sealed unsafe class Gl
 {
     public const int COLOR_BUFFER_BIT = 0x4000, DEPTH_BUFFER_BIT = 0x0100;
     public const int DEPTH_TEST = 0x0B71, CULL_FACE = 0x0B44, BLEND = 0x0BE2, MULTISAMPLE = 0x809D;
-    public const int LEQUAL = 0x0203, SRC_ALPHA = 0x0302, ONE_MINUS_SRC_ALPHA = 0x0303;
+    public const int LEQUAL = 0x0203, SRC_ALPHA = 0x0302, ONE_MINUS_SRC_ALPHA = 0x0303, ONE = 1;
     public const int ARRAY_BUFFER = 0x8892, ELEMENT_ARRAY_BUFFER = 0x8893, STATIC_DRAW = 0x88E4;
     public const int FLOAT = 0x1406, UNSIGNED_INT = 0x1405, UNSIGNED_BYTE = 0x1401;
-    public const int TRIANGLES = 0x0004, LINES = 0x0001;
+    public const int TRIANGLES = 0x0004, LINES = 0x0001, TRIANGLE_STRIP = 0x0005;
     public const int VERTEX_SHADER = 0x8B31, FRAGMENT_SHADER = 0x8B30, COMPILE_STATUS = 0x8B81, LINK_STATUS = 0x8B82;
     public const int TEXTURE_2D = 0x0DE1, TEXTURE0 = 0x84C0, RGBA = 0x1908, RGBA8 = 0x8058, RGBA32F = 0x8814;
     public const int TEXTURE_MIN_FILTER = 0x2801, TEXTURE_MAG_FILTER = 0x2800, TEXTURE_WRAP_S = 0x2802, TEXTURE_WRAP_T = 0x2803;
     public const int TEXTURE_MAX_ANISOTROPY = 0x84FE; // EXT_texture_filter_anisotropic, everywhere on macOS
-    public const int LINEAR = 0x2601, NEAREST = 0x2600, LINEAR_MIPMAP_LINEAR = 0x2703, REPEAT = 0x2901;
+    public const int LINEAR = 0x2601, NEAREST = 0x2600, LINEAR_MIPMAP_LINEAR = 0x2703, REPEAT = 0x2901, CLAMP_TO_EDGE = 0x812F;
     public const int FRAMEBUFFER = 0x8D40, READ_FRAMEBUFFER = 0x8CA8, DRAW_FRAMEBUFFER = 0x8CA9, RENDERBUFFER = 0x8D41;
     public const int COLOR_ATTACHMENT0 = 0x8CE0, DEPTH_ATTACHMENT = 0x8D00, DEPTH_COMPONENT24 = 0x81A6, FRAMEBUFFER_COMPLETE = 0x8CD5;
     public const int FRONT_AND_BACK = 0x0408, LINE = 0x1B01, FILL = 0x1B02;
@@ -28,6 +28,7 @@ internal sealed unsafe class Gl
     private readonly delegate* unmanaged<int, void> _clear, _enable, _disable, _depthFunc, _activeTexture, _useProgram,
         _deleteProgram, _deleteShader, _compileShader, _linkProgram, _bindVertexArray, _enableVertexAttribArray;
     private readonly delegate* unmanaged<int, int, int, int, void> _viewport;
+    private readonly delegate* unmanaged<byte, void> _depthMask;
     private readonly delegate* unmanaged<int, int, void> _blendFunc, _polygonMode, _bindBuffer, _bindTexture, _attachShader,
         _bindFramebuffer, _bindRenderbuffer, _pixelStorei, _uniform1i;
     private readonly delegate* unmanaged<int, int*, void> _genVertexArrays, _genBuffers, _genTextures, _genFramebuffers,
@@ -71,6 +72,7 @@ internal sealed unsafe class Gl
         _enable = (delegate* unmanaged<int, void>) Load("glEnable");
         _disable = (delegate* unmanaged<int, void>) Load("glDisable");
         _depthFunc = (delegate* unmanaged<int, void>) Load("glDepthFunc");
+        _depthMask = (delegate* unmanaged<byte, void>) Load("glDepthMask");
         _activeTexture = (delegate* unmanaged<int, void>) Load("glActiveTexture");
         _useProgram = (delegate* unmanaged<int, void>) Load("glUseProgram");
         _deleteProgram = (delegate* unmanaged<int, void>) Load("glDeleteProgram");
@@ -137,6 +139,7 @@ internal sealed unsafe class Gl
     public void Enable(int cap) => _enable(cap);
     public void Disable(int cap) => _disable(cap);
     public void DepthFunc(int func) => _depthFunc(func);
+    public void DepthMask(bool write) => _depthMask(write ? (byte) 1 : (byte) 0);
     public void BlendFunc(int src, int dst) => _blendFunc(src, dst);
     public void PolygonMode(int face, int mode) => _polygonMode(face, mode);
     public void Viewport(int x, int y, int w, int h) => _viewport(x, y, w, h);
