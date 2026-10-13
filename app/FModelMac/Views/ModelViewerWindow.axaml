@@ -97,12 +97,20 @@
                 <ListBox x:Name="SectionsList" Background="Transparent">
                     <ListBox.ItemTemplate>
                         <DataTemplate x:DataType="r:ViewerSection">
-                            <CheckBox IsChecked="{Binding IsVisible}" ToolTip.Tip="{Binding MaterialName}">
-                                <StackPanel>
-                                    <TextBlock Text="{Binding MaterialName}" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Text="{Binding Details}" Classes="dim" FontSize="11" TextTrimming="CharacterEllipsis" />
-                                </StackPanel>
-                            </CheckBox>
+                            <DockPanel>
+                                <!-- FModel's material overwrite: the next material opened replaces this one -->
+                                <ToggleButton DockPanel.Dock="Right" Padding="4" Margin="4,0,0,0" VerticalAlignment="Center"
+                                              IsChecked="{Binding IsAwaitingMaterial}" Click="OnOverwriteMaterialClick"
+                                              ToolTip.Tip="Overwrite Material: double-click a material in the main window to put it here">
+                                    <c:Glyph Data="{StaticResource MaterialIcon}" />
+                                </ToggleButton>
+                                <CheckBox IsChecked="{Binding IsVisible}" ToolTip.Tip="{Binding MaterialName}">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding MaterialName}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding Details}" Classes="dim" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </CheckBox>
+                            </DockPanel>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>

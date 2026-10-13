@@ -24,9 +24,12 @@ namespace FModelMac.Rendering;
 /// (maps reference the same few hundred textures from thousands of components), and maps use a smaller
 /// texture size to keep memory in check. Safe to use from several threads.
 /// </summary>
-public sealed class ViewerLoadContext(int maxTextureSize = 2048)
+/// <param name="maxTextureSize">FModel's Preview Max Texture Size.</param>
+/// <param name="platform">The game's texture platform (Settings › General), for console cooks.</param>
+public sealed class ViewerLoadContext(int maxTextureSize = 1024, ETexturePlatform platform = ETexturePlatform.DesktopMobile)
 {
     public int MaxTextureSize { get; } = maxTextureSize;
+    public ETexturePlatform Platform { get; } = platform;
     internal readonly ConcurrentDictionary<string, Lazy<(ViewerTexture? Texture, Vector3 Color)>> Materials = new(StringComparer.OrdinalIgnoreCase);
     internal readonly ConcurrentDictionary<string, Lazy<ViewerTexture?>> Textures = new(StringComparer.OrdinalIgnoreCase);
     // Landscapes: layer colors, the diffuse textures of a landscape material, and textures' average colors
@@ -63,14 +66,29 @@ public sealed partial class ViewerSection : ObservableObject
 {
     public required int FirstIndex { get; init; }
     public required int IndexCount { get; init; }
-    public required string MaterialName { get; init; }
-    public ViewerTexture? Texture { get; init; }
-    public Vector3 Color { get; init; } = new(0.62f);
+
+    // Settable for FModel's material overwrite: the next material extracted replaces this section's
+    [ObservableProperty] private string _materialName = "";
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(Details))] private ViewerTexture? _texture;
+    [ObservableProperty] private Vector3 _color = new(0.62f);
 
     public string Details => Texture is { } t ? $"{t.Name} ({t.Width}×{t.Height})" : "No diffuse texture";
 
     [ObservableProperty] private bool _isVisible = true;
+
+    /// <summary>Waiting for the next extracted material to replace this one.</summary>
+    [ObservableProperty] private bool _isAwaitingMaterial;
+
+    public void ApplyMaterial(ViewerMaterial material)
+    {
+        MaterialName = material.Name;
+        Texture = material.Texture;
+        Color = material.Color;
+    }
 }
+
+/// <summary>What the viewer draws of a material: its name, diffuse texture (if any) and color.</summary>
+public sealed record ViewerMaterial(string Name, ViewerTexture? Texture, Vector3 Color);
 
 /// <summary>
 /// CPU side of a mesh for the viewer: LOD 0 converted to a Y-up right-handed space
@@ -158,6 +176,62 @@ public sealed class ViewerModel
     {
         using var dto = new StaticMeshDto(component, EMeshQuality.Highest);
         return Build(dto, "Spline Mesh", context, overrideMaterials, ct);
+    }
+
+    /// <summary>
+    /// FModel's material preview: the material on a cube (the editor's BasicShapes/Cube: 100 units, one UV square
+    /// per face), standing on the ground grid.
+    /// </summary>
+    public static ViewerModel FromMaterial(UMaterialInterface material, ViewerLoadContext context)
+    {
+        var resolved = ResolveMaterial(material, context);
+        var vertices = new List<float>();
+        var indices = new List<uint>();
+        // Each face: normal and the two in-plane axes (u to the right, v down as textures are), in viewer space
+        (Vector3 N, Vector3 U, Vector3 V)[] faces =
+        [
+            (Vector3.UnitZ, Vector3.UnitX, -Vector3.UnitY), (-Vector3.UnitZ, -Vector3.UnitX, -Vector3.UnitY),
+            (Vector3.UnitX, -Vector3.UnitZ, -Vector3.UnitY), (-Vector3.UnitX, Vector3.UnitZ, -Vector3.UnitY),
+            (Vector3.UnitY, Vector3.UnitX, Vector3.UnitZ), (-Vector3.UnitY, Vector3.UnitX, -Vector3.UnitZ)
+        ];
+        foreach (var (n, u, v) in faces)
+        {
+            var first = (uint) (vertices.Count / FloatsPerVertex);
+            foreach (var (a, b) in new[] { (0f, 0f), (1f, 0f), (1f, 1f), (0f, 1f) })
+            {
+                var p = (n + (a * 2 - 1) * u + (b * 2 - 1) * v) * 50 + new Vector3(0, 50, 0); // resting on the ground grid
+                vertices.AddRange([p.X, p.Y, p.Z, n.X, n.Y, n.Z, a, b]);
+            }
+            // Counter-clockwise seen from outside
+            var ccw = Vector3.Dot(Vector3.Cross(u, v), n) > 0;
+            indices.AddRange(ccw ? [first, first + 1, first + 2, first, first + 2, first + 3] : [first, first + 2, first + 1, first, first + 3, first + 2]);
+        }
+
+        return new ViewerModel
+        {
+            Name = material.Name,
+            Kind = "Material",
+            Vertices = vertices.ToArray(),
+            Indices = indices.ToArray(),
+            Sections =
+            [
+                new ViewerSection
+                {
+                    FirstIndex = 0, IndexCount = indices.Count, MaterialName = resolved.Name, Texture = resolved.Texture, Color = resolved.Color
+                }
+            ],
+            LodCount = 1,
+            Min = new Vector3(-50, 0, -50),
+            Max = new Vector3(50, 100, 50)
+        };
+    }
+
+    /// <summary>The diffuse texture and color the viewer uses for a material.</summary>
+    public static ViewerMaterial ResolveMaterial(UMaterialInterface material, ViewerLoadContext context)
+    {
+        var (texture, color) = context.Materials.GetOrAdd(material.GetPathName(),
+            _ => new Lazy<(ViewerTexture?, Vector3)>(() => ResolveMaterial(material, context, new Vector3(0.62f)))).Value;
+        return new ViewerMaterial(material.Name, texture, color);
     }
 
     // UE5 desktop cooks strip the morph deltas from UMorphTarget and keep them only in the mesh's GPU
@@ -350,7 +424,7 @@ public sealed class ViewerModel
 
             if (texture is null) return (null, color);
             var decoded = context.Textures.GetOrAdd(texture.GetPathName(),
-                _ => new Lazy<ViewerTexture?>(() => Decode(texture, context.MaxTextureSize))).Value;
+                _ => new Lazy<ViewerTexture?>(() => Decode(texture, context.MaxTextureSize, context.Platform))).Value;
             return (decoded, color);
         }
         catch (Exception e)
@@ -368,9 +442,9 @@ public sealed class ViewerModel
         return parameters.Diffuse is { } diffuse && diffuse.TryLoad<UTexture>(out var texture) ? texture : null;
     }
 
-    private static ViewerTexture? Decode(UTexture texture, int maxSize)
+    private static ViewerTexture? Decode(UTexture texture, int maxSize, ETexturePlatform platform)
     {
-        if (texture.Decode(maxSize) is not { } decoded) return null;
+        if (texture.Decode(maxSize, platform) is not { } decoded) return null;
         using var bitmap = decoded.ToSkBitmap();
         using var rgba = bitmap.Copy(SKColorType.Rgba8888);
         return rgba is null ? null : new ViewerTexture(texture.Name, rgba.Width, rgba.Height, rgba.Bytes);

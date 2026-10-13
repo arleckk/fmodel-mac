@@ -89,6 +89,12 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
   y captura PNG. Arrastrar orbita, clic derecho/Shift paneo, scroll o pellizco zoom, WASD/QE
   mueve, F encuadra la selección. Cada malla que abres se **agrega a la escena** junto a las
   demás; el outliner (SCENE) permite ocultar, quitar o seleccionar cada una, y Clear Scene vacía.
+  Doble clic en un **material** (instancia o material base) lo muestra sobre un cubo como en FModel
+  (el siguiente material reemplaza al del cubo); con el botón de material de una sección encendido
+  en la lista MATERIALS, el siguiente material que abras **sustituye el de esa sección** (el
+  "overwrite material" de FModel). Settings › Preview tiene Preview Materials y **Preview Max
+  Texture Size** (4–4096 px, 1024 por omisión) para las texturas del visor; los mapas usan 512 como
+  máximo, y todo se decodifica con la plataforma de texturas del juego.
   Doble clic en un **mapa** (.umap) carga el nivel completo: actores y componentes adjuntos,
   instancias (ISM/HISM/foliage), niveles de streaming (con su transformación), level instances y
   materiales sobrescritos, con instancing en GPU (una llamada de dibujo por malla). Las **spline
@@ -129,6 +135,18 @@ Replica `MainWindow.xaml` de FModel con la paleta oscura de AdonisUI (capas `#2A
   `radadec`, igual que en FModel: compílalo desde Unreal Engine y ponlo en la carpeta de datos.
 - **Panel derecho:** pestañas por asset (doble clic reemplaza la actual, "+" agrega, clic central
   cierra), propiedades con el `Json.xshd` de FModel y la textura a la derecha con divisor ajustable.
+- **Explorador de assets** (el "Preview New Explorer System" de FModel, interruptor arriba a la
+  derecha): al elegir una carpeta, el panel derecho muestra sus subcarpetas y archivos como
+  **mosaicos** con miniatura (texturas, imágenes, íconos de Fortnite) o ícono y color por categoría,
+  tipo de la clase principal y tamaño; o como **lista** (nombre, tipo, tamaño). Buscador, filtro por
+  categoría (⌥0–⌥9), selección con clic/⌘/⇧ y flechas, ⌘A, ⌫ sube una carpeta, Enter o doble clic
+  abre (un archivo cambia a las pestañas; una carpeta entra, saltando cadenas de carpetas únicas),
+  menú contextual con Extract/Export/Copy como el de Packages, y los atajos de exportación actúan
+  sobre los mosaicos seleccionados. Solo se leen los paquetes que están en pantalla (4 a la vez, los
+  más recientes primero), así que carpetas grandes abren al instante (15 texturas de DSR con
+  miniatura en 0.27 s); el filtro por categoría sí lee toda la carpeta. ⌘[ o el botón del ratón
+  "atrás" regresan al explorador desde las pestañas; Z (Settings › Hotkeys) alterna, y los botones
+  flotantes abajo a la derecha alternan explorador/pestañas y las miniaturas.
 - **Consola** desplegable con `[INF]/[WRN]/[ERR]` en los colores de FModel, abrir carpeta de salida
   y limpiar.
 - **Barra de estado** que cambia de color según el estado.

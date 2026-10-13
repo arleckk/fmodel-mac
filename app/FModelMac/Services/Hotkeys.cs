@@ -82,6 +82,7 @@ public sealed class HotkeySettings
     public Hotkey AssetRightTab { get; set; } = new(Key.E);
     public Hotkey AssetAddTab { get; set; } = new(Key.T, KeyModifiers.Meta);
     public Hotkey AssetRemoveTab { get; set; } = new(Key.W, KeyModifiers.Meta);
+    public Hotkey SwitchAssetExplorer { get; set; } = new(Key.Z);
 
     public Hotkey ExportData { get; set; } = Hotkey.None;
     public Hotkey ExportProperties { get; set; } = Hotkey.None;
@@ -107,6 +108,7 @@ public sealed class HotkeySettings
         ("NAVIGATION", "Right Switch on Asset Tab", nameof(AssetRightTab)),
         ("NAVIGATION", "Add Asset Tab", nameof(AssetAddTab)),
         ("NAVIGATION", "Remove Selected Asset Tab", nameof(AssetRemoveTab)),
+        ("NAVIGATION", "Switch Asset Explorer", nameof(SwitchAssetExplorer)),
         ("EXPORT", "Export Raw Data", nameof(ExportData)),
         ("EXPORT", "Export Properties", nameof(ExportProperties)),
         ("EXPORT", "Export Textures", nameof(ExportTextures)),

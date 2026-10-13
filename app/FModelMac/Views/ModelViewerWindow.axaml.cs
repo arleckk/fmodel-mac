@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
@@ -59,6 +60,43 @@ public partial class ModelViewerWindow : Window
         SceneList.SelectedItem = item;
         Viewport.FrameAll();
         return item;
+    }
+
+    /// <summary>The section waiting for a material (FModel's ModelIsOverwritingMaterial), if any.</summary>
+    public ViewerSection? AwaitingMaterial =>
+        Scene.Items.SelectMany(i => i.Objects).SelectMany(o => o.Model.Sections).FirstOrDefault(s => s.IsAwaitingMaterial);
+
+    /// <summary>
+    /// FModel's material preview: into the section waiting for one, otherwise on a cube (which replaces the previous
+    /// material's cube, like FModel swaps the cube's material).
+    /// </summary>
+    public void ShowMaterial(ViewerMaterial material, ViewerModel cube)
+    {
+        if (AwaitingMaterial is { } section)
+        {
+            section.ApplyMaterial(material);
+            section.IsAwaitingMaterial = false;
+            Viewport.RequestNextFrameRendering();
+            return;
+        }
+        if (Scene.Items.FirstOrDefault(i => i.Kind == "Material") is { Single: { } previous } item)
+        {
+            previous.Model.Sections[0].ApplyMaterial(material);
+            var renamed = new SceneItem { Name = cube.Name, Kind = item.Kind, Details = item.Details, Objects = item.Objects }.WithBounds();
+            var index = Scene.Items.IndexOf(item);
+            Scene.Items[index] = renamed;
+            SceneList.SelectedItem = renamed;
+            return;
+        }
+        AddModel(cube);
+    }
+
+    // One section at a time waits for a material
+    private void OnOverwriteMaterialClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleButton { DataContext: ViewerSection section, IsChecked: true }) return;
+        foreach (var other in Scene.Items.SelectMany(i => i.Objects).SelectMany(o => o.Model.Sections))
+            if (other != section) other.IsAwaitingMaterial = false;
     }
 
     /// <summary>Replaces the scene with a map (and its hidden sky/backdrop item, when it has one).</summary>

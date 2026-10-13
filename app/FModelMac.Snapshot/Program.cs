@@ -387,6 +387,59 @@ if (args is ["--streaming", var strOut, var strPaks, var strGame, var strAes, va
     return;
 }
 
+// "--explorer <outdir> <paks> <EGame> <aes|-> <folder>..." opens folders of a real game in the asset explorer: how long
+// the tiles on screen take to get their type and thumbnail, a screenshot of each, and the category filter on the first
+if (args is ["--explorer", var expOut, var expPaks, var expGame, var expAes, .. var expFolders])
+{
+    expOut = Path.GetFullPath(expOut);
+    Directory.CreateDirectory(expOut);
+    Environment.SetEnvironmentVariable("FMODELMAC_DATA_DIR", Path.Combine(expOut, "data"));
+    new AppSettings
+    {
+        ArchiveDir = expPaks, Game = expGame, AesKey = expAes == "-" ? null : expAes, OutputDir = Path.Combine(expOut, "Output"),
+        UsmapPath = Environment.GetEnvironmentVariable("FMODELMAC_USMAP")
+    }.Save();
+    RunOnUiThread(SnapshotApp.BuildAvaloniaApp(), async () =>
+    {
+        var vm = new MainViewModel();
+        var window = new MainWindow { DataContext = vm, Width = 1600, Height = 950 };
+        window.Show();
+        await WaitFor(() => vm.Archives.Count > 0 && vm.IsReady, "the game");
+        var load = System.Diagnostics.Stopwatch.StartNew();
+        await vm.LoadCommand.ExecuteAsync(null);
+        Console.WriteLine($"Init: {vm.StatusExtra} | loaded in {load.Elapsed.TotalSeconds:F1}s");
+        foreach (var folder in expFolders)
+        {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            if (vm.NavigateToFolder(folder) is null)
+            {
+                Console.WriteLine($"Not found: {folder}");
+                continue;
+            }
+            await Task.Delay(100);
+            // What's on screen: the first two rows (the third is cut off at this window size)
+            var shown = vm.Explorer.Rows.Take(2).SelectMany(r => r.Entries).OfType<ExplorerFile>().ToList();
+            for (var i = 0; i < 600 && shown.Any(f => f.TypeName == f.File.Extension); i++) await Task.Delay(50);
+            var typed = watch.Elapsed.TotalSeconds;
+            for (var i = 0; i < 200 && shown.Any(f => f.Category == AssetCategory.Texture && !f.HasThumbnail); i++) await Task.Delay(50);
+            Console.WriteLine($"{folder}: {vm.Explorer.Status} | {shown.Count} on screen typed in {typed:F2}s, thumbnails " +
+                              $"{shown.Count(f => f.HasThumbnail)} in {watch.Elapsed.TotalSeconds:F2}s | " +
+                              string.Join(", ", shown.GroupBy(f => f.TypeName).OrderByDescending(g => g.Count()).Take(6).Select(g => $"{g.Key}×{g.Count()}")));
+            SaveTo(window, expOut, $"explorer-{folder.Replace('/', '_')}.png");
+        }
+        if (expFolders.Length > 0 && vm.NavigateToFolder(expFolders[0]) is not null)
+        {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            vm.Explorer.SelectedCategory = AssetCategory.Materials;
+            await Task.Delay(100);
+            await WaitFor(() => !vm.Explorer.Status.StartsWith("Reading"), "category filter");
+            Console.WriteLine($"Category Materials on {expFolders[0]}: {vm.Explorer.Status} in {watch.Elapsed.TotalSeconds:F2}s");
+        }
+        window.Close();
+    }, TimeSpan.FromMinutes(10));
+    return;
+}
+
 // "--unluac <chunk>..." decompiles compiled Lua files from disk with the bundled libunluac (FMODELMAC_LUA_MODE=
 // disassemble for the other mode); prints each result's status and its first FMODELMAC_LINES lines (default 15)
 if (args is ["--unluac", .. var chunkFiles])
@@ -796,7 +849,10 @@ async Task ViewerTestAsync(string outputDir, string[] packages)
             continue;
         }
 
-        var file = provider.Files.Values.FirstOrDefault(f => f.Path.Equals(package, StringComparison.OrdinalIgnoreCase));
+        // "swap:<material>" first turns on the overwrite button of the first section in the scene
+        var swap = package.StartsWith("swap:");
+        var packagePath = swap ? package[5..] : package;
+        var file = provider.Files.Values.FirstOrDefault(f => f.Path.Equals(packagePath, StringComparison.OrdinalIgnoreCase));
         if (file is null)
         {
             Console.WriteLine($"Not found: {package}");
@@ -899,6 +955,29 @@ async Task ViewerTestAsync(string outputDir, string[] packages)
             continue;
         }
 
+        // Materials: on a cube, or into the section waiting for one
+        if (!exports.Any(ViewerModel.CanView) && exports.OfType<UMaterialInterface>().FirstOrDefault() is { } material)
+        {
+            var context = new ViewerLoadContext(1024);
+            var resolved = ViewerModel.ResolveMaterial(material, context);
+            var cube = ViewerModel.FromMaterial(material, context);
+            ViewerSection? target = null;
+            if (swap)
+            {
+                target = viewer.Scene.Items.SelectMany(i => i.Objects).SelectMany(o => o.Model.Sections).FirstOrDefault();
+                if (target is not null) target.IsAwaitingMaterial = true;
+            }
+            var before = target?.MaterialName;
+            viewer.ShowMaterial(resolved, cube);
+            Console.WriteLine($"{material.Name} ({material.ExportType}): texture {resolved.Texture?.Name ?? "none"} " +
+                              $"{resolved.Texture?.Width}×{resolved.Texture?.Height}, color {resolved.Color}" +
+                              (target is null
+                                  ? $" | on a cube; scene items: {string.Join(", ", viewer.Scene.Items.Select(i => $"{i.Name} ({i.Kind})"))}"
+                                  : $" | swapped section '{before}' -> '{target.MaterialName}', waiting {target.IsAwaitingMaterial}"));
+            await Capture($"material-{(swap ? "swap-" : "")}{material.Name}");
+            continue;
+        }
+
         // A lone skeleton opens as bones only, like "Handle Skeletons as Empty Meshes"
         var mesh = exports.FirstOrDefault(ViewerModel.CanView) ?? exports.OfType<USkeleton>().FirstOrDefault();
         if (mesh is null)
@@ -988,6 +1067,7 @@ async Task RunAsync()
     Console.WriteLine($"Load: {vm.StatusText} | folders tab {vm.SelectedLeftTab} | {vm.FolderSummary}");
     Save(window, "2-folders.png");
     await InputTestAsync(window, vm);
+    await ExplorerTestAsync(window, vm);
 
     vm.SelectedLeftTab = 2;
     vm.SelectedPackage = vm.Packages.First(p => p.Name == "T_Streaming.uasset");
@@ -1572,6 +1652,66 @@ async Task StreamingTestAsync(string outputDir, string mapPath)
     worlds = await Export();
     Console.WriteLine($"Skip: asked {asked} time(s), {worlds.Length} world file(s): {string.Join(", ", worlds)}");
     window.Close();
+}
+
+// FModel's new asset explorer: tiles with thumbnails, list view, category filter, search, selection, opening a file
+// (the tabs come back) and ⌘[ (the explorer comes back)
+async Task ExplorerTestAsync(MainWindow window, MainViewModel vm)
+{
+    var explorer = vm.Explorer;
+    vm.NavigateToFolder("CUE4ParseFixtures/Content/Fixtures/Textures");
+    await WaitFor(() => explorer.Visible.OfType<ExplorerFile>().All(f => f.Category != AssetCategory.All || f.TypeName != "uasset"), "explorer types");
+    await WaitFor(() => explorer.Visible.OfType<ExplorerFile>().Count(f => f.HasThumbnail) >= 8, "thumbnails");
+    var files = explorer.Visible.OfType<ExplorerFile>().ToList();
+    Console.WriteLine($"Explorer: visible {vm.IsExplorerVisible} | {explorer.Status} | {explorer.Columns} columns, {explorer.Rows.Count} rows | " +
+                      $"thumbnails {files.Count(f => f.HasThumbnail)} | types {string.Join(", ", files.GroupBy(f => f.TypeName).Select(g => $"{g.Key}×{g.Count()}"))}");
+    Save(window, "explorer-grid.png");
+
+    explorer.IsList = true;
+    await Task.Delay(300);
+    Console.WriteLine($"  list: {explorer.Rows.Count} rows, setting {vm.Settings.ExplorerViewMode}");
+    Save(window, "explorer-list.png");
+    explorer.IsGrid = true;
+
+    explorer.SearchText = "streaming";
+    Console.WriteLine($"  search 'streaming': {string.Join(", ", explorer.Visible.Select(e => e.Name))}");
+    explorer.SearchText = "";
+
+    vm.NavigateToFolder("CUE4ParseFixtures/Content/Fixtures");
+    await Task.Delay(200);
+    Console.WriteLine($"  Fixtures: {explorer.Status} | first {string.Join(", ", explorer.Visible.Take(4).Select(e => e.Name))}");
+    var materials = explorer.Visible.OfType<ExplorerFolder>().First(f => f.Name == "Materials");
+    Console.WriteLine($"  'Materials' tile: badge {materials.HasBadge}, {materials.AssetsText}");
+    Save(window, "explorer-folders.png");
+
+    // Category filter: every file's category is read, then only materials stay
+    vm.NavigateToFolder("CUE4ParseFixtures/Content/Fixtures/Materials");
+    explorer.SelectedCategory = AssetCategory.Materials;
+    await WaitFor(() => !explorer.Status.StartsWith("Reading"), "category filter");
+    await Task.Delay(200);
+    Console.WriteLine($"  Materials folder, category Materials: {string.Join(", ", explorer.Visible.OfType<ExplorerFile>().Select(f => $"{f.Name} ({f.TypeName})"))}");
+    explorer.SelectCategory(3); // ⌥3: Texture
+    await WaitFor(() => !explorer.Status.StartsWith("Reading"), "category filter");
+    Console.WriteLine($"  ⌥3 -> {explorer.SelectedCategory}: {explorer.Visible.Count} | empty text {explorer.IsEmpty}");
+    explorer.SelectedCategory = AssetCategory.All;
+
+    // Selection drives the Packages tab's INFORMATION; ⇧ extends
+    var first = explorer.Visible.OfType<ExplorerFile>().First();
+    explorer.Click(first, Avalonia.Input.KeyModifiers.None);
+    explorer.Move(1, 0, extend: true);
+    Console.WriteLine($"  selected {string.Join(", ", explorer.SelectedEntries.Select(e => e.Name))} | package {vm.SelectedPackage?.Name}");
+
+    // Opening a file hides the explorer; ⌘[ brings it back; Z switches
+    await vm.ExtractAsync(first.File);
+    var afterOpen = vm.IsExplorerVisible;
+    window.RaiseEvent(new Avalonia.Input.KeyEventArgs
+        { RoutedEvent = Avalonia.Input.InputElement.KeyDownEvent, Key = Avalonia.Input.Key.OemOpenBrackets, KeyModifiers = Avalonia.Input.KeyModifiers.Meta });
+    var afterBack = vm.IsExplorerVisible;
+    window.RaiseEvent(new Avalonia.Input.KeyEventArgs { RoutedEvent = Avalonia.Input.InputElement.KeyDownEvent, Key = Avalonia.Input.Key.Z });
+    Console.WriteLine($"  open -> explorer {afterOpen} | ⌘[ -> {afterBack} | Z -> {vm.IsExplorerVisible} | tab '{vm.SelectedTab?.Header}'");
+
+    vm.NavigateToFolder("CUE4ParseFixtures/Content/Fixtures/Textures");
+    vm.IsExplorerVisible = false; // the rest of the run looks at the tabs
 }
 
 async Task WaitFor(Func<bool> condition, string what)

@@ -29,6 +29,7 @@ public partial class MainWindow : Window
         FolderList.AddHandler(KeyDownEvent, OnFolderKeyDown, RoutingStrategies.Tunnel);
         PackagesList.AddHandler(KeyDownEvent, OnPackageKeyDown, RoutingStrategies.Tunnel);
         AddHandler(KeyDownEvent, OnHotkeyDown, RoutingStrategies.Tunnel);
+        AddHandler(PointerPressedEvent, OnWindowPointerPressed, RoutingStrategies.Tunnel);
 
         // Settings › Themes recolors the shared JSON definition: redraw what's on screen
         AppResources.HighlightingChanged += OnHighlightingChanged;
@@ -48,6 +49,7 @@ public partial class MainWindow : Window
             _vm.Logs.CollectionChanged -= OnLogsChanged;
             _vm.ModelReady -= OnModelReady;
             _vm.MapReady -= OnMapReady;
+            _vm.MaterialReady -= OnMaterialReady;
             _vm.SoundsReady -= OnSoundsReady;
             _vm.ReferencesReady -= OnReferencesReady;
             _vm.Favorites.CollectionChanged -= OnFavoritesChanged;
@@ -72,6 +74,7 @@ public partial class MainWindow : Window
         _vm.Logs.CollectionChanged += OnLogsChanged;
         _vm.ModelReady += OnModelReady;
         _vm.MapReady += OnMapReady;
+        _vm.MaterialReady += OnMaterialReady;
         _vm.SoundsReady += OnSoundsReady;
         _vm.ReferencesReady += OnReferencesReady;
         _vm.AnimationReady = animation => _viewer is { IsVisible: true } viewer
@@ -274,6 +277,8 @@ public partial class MainWindow : Window
     private void OnModelReady(ViewerModel model) => ShowViewer().AddModel(model);
 
     private void OnMapReady(SceneItem[] map) => ShowViewer().ShowMap(map);
+
+    private void OnMaterialReady(ViewerMaterial material, ViewerModel cube) => ShowViewer().ShowMaterial(material, cube);
 
     private ModelViewerWindow ShowViewer()
     {
@@ -492,7 +497,13 @@ public partial class MainWindow : Window
         var find = e.Key == Key.F && meta && !shift;
         var next = e.Key == Key.G && meta || e.Key == Key.F3 && !meta;
         if (!find && !next) return false;
-        if (Vm.SelectedTab?.Document is not { TextLength: > 0 }) return false;
+        // FModel's Ctrl+F with the explorer open: its search box
+        if (find && Vm.IsExplorerVisible)
+        {
+            ExplorerView.FocusSearch();
+            return true;
+        }
+        if (Vm.IsExplorerVisible || Vm.SelectedTab?.Document is not { TextLength: > 0 }) return false;
 
         var panel = Editor.SearchPanel;
         if (find || panel.IsClosed)
@@ -519,10 +530,26 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
+        // FModel's BrowseBack (⌘[ here): from the tabs back to the explorer, else Packages → Folders → parent folder
+        if (e.Key == Key.OemOpenBrackets && e.KeyModifiers == KeyModifiers.Meta)
+        {
+            BrowseBack();
+            e.Handled = true;
+            return;
+        }
         if (e.Source is TextBox { IsReadOnly: false }) return;
         var hotkeys = _vm.Settings.Hotkeys;
 
-        if (hotkeys.AssetAddTab.IsTriggered(e)) _vm.AddTabCommand.Execute(null);
+        // FModel's Alt+0…9: the explorer's category filter
+        if (_vm.IsExplorerVisible && e.KeyModifiers == KeyModifiers.Alt && e.Key is >= Key.D0 and <= Key.D9)
+        {
+            _vm.Explorer.SelectCategory(e.Key - Key.D0);
+            e.Handled = true;
+            return;
+        }
+
+        if (hotkeys.SwitchAssetExplorer.IsTriggered(e) && _vm.NewAssetExplorer) _vm.IsExplorerVisible = !_vm.IsExplorerVisible;
+        else if (hotkeys.AssetAddTab.IsTriggered(e)) _vm.AddTabCommand.Execute(null);
         else if (hotkeys.AssetRemoveTab.IsTriggered(e)) _vm.CloseTabCommand.Execute(null);
         else if (hotkeys.AssetLeftTab.IsTriggered(e)) SwitchTab(-1);
         else if (hotkeys.AssetRightTab.IsTriggered(e)) SwitchTab(1);
@@ -531,12 +558,35 @@ public partial class MainWindow : Window
         else if (ExportHotkey(hotkeys, e) is { } export)
         {
             e.Handled = true;
-            // FModel exports what's selected in the focused list: here, the packages
-            if (_vm.IsReady && _vm.SelectedLeftTab == 2 && PackagesList.SelectedItems is { Count: > 0 } selected)
+            // FModel exports what's selected in the focused list: the explorer's tiles, or the packages
+            if (!_vm.IsReady) return;
+            if (_vm.IsExplorerVisible && _vm.Explorer.SelectedFiles.Select(f => f.Item).ToArray() is { Length: > 0 } tiles)
+                await export.ExecuteAsync(tiles);
+            else if (_vm.SelectedLeftTab == 2 && PackagesList.SelectedItems is { Count: > 0 } selected)
                 await export.ExecuteAsync(selected.Cast<object>().ToArray());
             return;
         }
         else return;
+        e.Handled = true;
+    }
+
+    private void BrowseBack()
+    {
+        if (_vm is not { } vm) return;
+        if (vm.NewAssetExplorer && !vm.IsExplorerVisible)
+        {
+            vm.IsExplorerVisible = true;
+            return;
+        }
+        if (vm.SelectedLeftTab == 2) vm.SelectedLeftTab = 1;
+        else if (vm.SelectedLeftTab == 1 && vm.SelectedFolder is { } folder && vm.Folders.Parent(folder) is { } parent) SelectFolder(parent);
+    }
+
+    // The mouse's back button, like FModel's BrowseBack
+    private void OnWindowPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(this).Properties.IsXButton1Pressed) return;
+        BrowseBack();
         e.Handled = true;
     }
 
@@ -575,6 +625,8 @@ public partial class MainWindow : Window
         ExportAnimationsItem.InputGesture = Gesture(hotkeys.ExportAnimations);
         ExportAudioItem.InputGesture = Gesture(hotkeys.ExportAudio);
         ExportCodeItem.InputGesture = Gesture(hotkeys.ExportCode);
+        ToolTip.SetTip(ExplorerToggle, hotkeys.SwitchAssetExplorer.IsAssigned
+            ? $"Switch Asset Explorer ({hotkeys.SwitchAssetExplorer})" : "Switch Asset Explorer");
     }
 
     // ---------- Packages ----------

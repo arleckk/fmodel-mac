@@ -93,6 +93,24 @@ public sealed class AppSettings
     public bool PreviewSkeletalMeshes { get; set; } = true;
     public bool PreviewAnimations { get; set; } = true;
     public bool PreviewWorlds { get; set; } = true;
+    /// <summary>FModel's "Preview Materials": a material opens on a cube; with a section waiting, it swaps that section's.</summary>
+    public bool PreviewMaterials { get; set; } = true;
+
+    /// <summary>FModel's "Preview Max Texture Size": largest side of the textures the 3D viewer decodes.</summary>
+    public int PreviewMaxTextureSize
+    {
+        get => _previewMaxTextureSize;
+        set => _previewMaxTextureSize = Math.Clamp(value, 4, 4096);
+    }
+    private int _previewMaxTextureSize = 1024;
+
+    // FModel's new asset explorer: a grid (or list) of the selected folder in place of the asset tabs
+    /// <summary>FModel's "Preview New Explorer System" switch.</summary>
+    public bool NewAssetExplorer { get; set; } = true;
+    [JsonConverter(typeof(StringEnumConverter))]
+    public ExplorerViewMode ExplorerViewMode { get; set; } = ExplorerViewMode.Grid;
+    /// <summary>Thumbnails of textures (and images, Fortnite item icons) in the explorer.</summary>
+    public bool PreviewTexturesAssetExplorer { get; set; } = true;
 
     /// <summary>FModel's "Handle Skeletons as Empty Meshes": skeletons open in the 3D viewer and Export › Model takes them.</summary>
     public bool SaveSkeletonAsMesh { get; set; }
@@ -334,3 +352,7 @@ public sealed class VersioningSettings
         MapStructTypes = MapStructTypes is null ? null : new Dictionary<string, KeyValuePair<string, string>>(MapStructTypes)
     };
 }
+
+/// <summary>FModel's EExplorerViewMode.</summary>
+public enum ExplorerViewMode { Grid, List }
+

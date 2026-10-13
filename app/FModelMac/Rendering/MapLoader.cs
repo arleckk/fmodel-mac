@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Numerics;
 using CUE4Parse.UE4.Assets.Exports;
 using CUE4Parse.UE4.Assets.Exports.Actor;
+using CUE4Parse.UE4.Assets.Exports.Texture;
 using CUE4Parse.UE4.Assets.Exports.WorldPartition;
 using CUE4Parse.UE4.Assets.Exports.WorldPartition.DataLayer;
 using CUE4Parse.UE4.Objects.Core.Math;
@@ -36,7 +37,8 @@ public static class MapLoader
     /// <summary>A World Partition runtime cell to stream in, and the partition (grid) it belongs to.</summary>
     private sealed record CellRef(FPackageIndex Cell, string Partition, bool IsHlod, DataLayerTable DataLayers);
 
-    public static SceneItem[] Load(UWorld world, IProgress<string>? progress = null, CancellationToken ct = default)
+    /// <param name="context">Texture size and platform; maps keep textures small (512) whatever the setting allows.</param>
+    public static SceneItem[] Load(UWorld world, IProgress<string>? progress = null, CancellationToken ct = default, ViewerLoadContext? context = null)
     {
         var builders = new ConcurrentDictionary<string, Func<ViewerLoadContext, ViewerModel>>(StringComparer.OrdinalIgnoreCase);
         var visitedWorlds = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
@@ -181,7 +183,7 @@ public static class MapLoader
         }
 
         // Convert each distinct mesh once, a few at a time
-        var context = new ViewerLoadContext(maxTextureSize: 512);
+        context = new ViewerLoadContext(Math.Min(context?.MaxTextureSize ?? 512, 512), context?.Platform ?? ETexturePlatform.DesktopMobile);
         var models = new ConcurrentDictionary<string, ViewerModel>(StringComparer.OrdinalIgnoreCase);
         var done = 0;
         var failed = 0;

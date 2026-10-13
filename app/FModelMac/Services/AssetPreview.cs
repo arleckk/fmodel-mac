@@ -3,6 +3,7 @@ using CUE4Parse.FileProvider;
 using CUE4Parse.FileProvider.Objects;
 using CUE4Parse.UE4.Assets.Exports;
 using CUE4Parse.UE4.Assets.Exports.Animation;
+using CUE4Parse.UE4.Assets.Exports.Material;
 using CUE4Parse.UE4.Objects.Engine;
 using CUE4Parse.UE4.Objects.Engine.Animation;
 using CUE4Parse.UE4.Assets.Exports.Texture;
@@ -25,10 +26,11 @@ public sealed record PreviewImage(string Name, byte[] Png, bool NearestNeighbor 
 /// <param name="World">The map of a .umap, for the 3D viewer.</param>
 /// <param name="Sounds">Sounds of the package or file, for the audio player.</param>
 /// <param name="Skeleton">The skeleton of the package, shown as an empty mesh with "Handle Skeletons as Empty Meshes".</param>
+/// <param name="Material">The material (or material instance) of the package, previewed on a cube.</param>
 public sealed record PreviewResult(string Text, string? Highlight, IReadOnlyList<PreviewImage>? Images,
     UObject? Mesh = null, UAnimationAsset? Animation = null, UWorld? World = null,
     IReadOnlyList<ExtractedSound>? Sounds = null, IReadOnlyList<string>? SoundWarnings = null, USkeleton? Skeleton = null,
-    string? Warning = null);
+    string? Warning = null, UMaterialInterface? Material = null);
 
 public static class AssetPreview
 {
@@ -63,7 +65,7 @@ public static class AssetPreview
                 exports.FirstOrDefault(ViewerModel.CanView),
                 exports.OfType<UAnimationAsset>().FirstOrDefault(a => a is UAnimSequence or UAnimMontage or UAnimComposite or UBlendSpaceBase),
                 exports.OfType<UWorld>().FirstOrDefault(), sounds, warnings, exports.OfType<USkeleton>().FirstOrDefault(),
-                imageWarnings);
+                imageWarnings, exports.OfType<UMaterialInterface>().FirstOrDefault());
         }
 
         if (audio is not null && SoundExtractor.AudioExtensions.Contains(file.Extension))

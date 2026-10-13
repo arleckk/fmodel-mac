@@ -14,6 +14,7 @@ using CUE4Parse.UE4.Objects.Engine;
 using CUE4Parse.UE4.Objects.Engine.Animation;
 using CUE4Parse_Conversion;
 using CUE4Parse.Utils;
+using CUE4Parse.UE4.Assets.Exports.Material;
 using FModelMac.Rendering;
 using CUE4Parse_Conversion.Options;
 using CUE4Parse.UE4.Versions;
@@ -45,6 +46,8 @@ public sealed partial class MainViewModel : ObservableObject
 
     public GameArchive? Archive => _archive;
     public FolderTreeViewModel Folders { get; } = new();
+    /// <summary>FModel's new asset explorer, shown in place of the asset tabs.</summary>
+    public ExplorerViewModel Explorer { get; }
     public ObservableCollection<ArchiveItem> Archives { get; } = [];
     public ObservableCollection<AssetItem> Packages { get; } = [];
     public ObservableCollection<AssetTab> Tabs { get; } = [];
@@ -76,6 +79,28 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] private int _selectedLeftTab;
     [ObservableProperty] private string _packageSearchText = "";
     [ObservableProperty] private AssetItem? _selectedPackage;
+
+    /// <summary>The asset explorer in place of the asset tabs (FModel's IsAssetsExplorerVisible).</summary>
+    [ObservableProperty] private bool _isExplorerVisible;
+
+    /// <summary>FModel's "Preview New Explorer System": off hides the explorer and its toggle.</summary>
+    public bool NewAssetExplorer
+    {
+        get => Settings.NewAssetExplorer;
+        set
+        {
+            if (value == Settings.NewAssetExplorer) return;
+            Settings.NewAssetExplorer = value;
+            SaveSettings();
+            OnPropertyChanged();
+            if (!value) IsExplorerVisible = false;
+        }
+    }
+
+    partial void OnIsExplorerVisibleChanged(bool value)
+    {
+        if (value && !Settings.NewAssetExplorer) IsExplorerVisible = false;
+    }
     [ObservableProperty] private AssetTab? _selectedTab;
     [ObservableProperty] private bool _isLoggerExpanded;
 
@@ -95,6 +120,11 @@ public sealed partial class MainViewModel : ObservableObject
         Folders.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(FolderTreeViewModel.SelectedFolder)) OnSelectedFolderChanged();
+        };
+        Explorer = new ExplorerViewModel(Settings, () => _archive?.Provider);
+        Explorer.SelectionChanged += entry =>
+        {
+            if (entry is ExplorerFile file) SelectedPackage = Packages.FirstOrDefault(p => p.File == file.File) ?? file.Item;
         };
         Tabs.Add(new AssetTab());
         SelectedTab = Tabs[0];
@@ -474,6 +504,7 @@ public sealed partial class MainViewModel : ObservableObject
             var sw = Stopwatch.StartNew();
             var index = await Task.Run(() => archive.BuildIndex(scope));
             Folders.Populate(index);
+            IsExplorerVisible = Settings.NewAssetExplorer; // FModel's LoadCommand shows the explorer
             Log(LogKind.Information, $"Loaded {index.FileCount:N0} packages from " +
                                      $"{scope?.Count ?? archive.MountedCount} archive(s) in {sw.Elapsed.TotalSeconds:F2}s");
             SelectedLeftTab = 1;
@@ -508,6 +539,7 @@ public sealed partial class MainViewModel : ObservableObject
                 return (compared, archive.BuildIndex(null, f => wanted.Contains(f.Path)));
             });
             Folders.Populate(index);
+            IsExplorerVisible = Settings.NewAssetExplorer; // FModel's LoadCommand shows the explorer
             Log(LogKind.Information, $"Loaded {index.FileCount:N0} {(newFiles ? "new" : "modified")} packages in {sw.Elapsed.TotalSeconds:F2}s " +
                                      $"(backup of {comparison.BackupCount:N0} files: {comparison.New.Count:N0} new, " +
                                      $"{comparison.Modified.Count:N0} modified, {comparison.Removed:N0} removed)");
@@ -556,6 +588,9 @@ public sealed partial class MainViewModel : ObservableObject
     {
         PackageSearchText = "";
         RefreshPackages();
+        Explorer.ShowFolder(SelectedFolder);
+        // FModel: picking a folder shows it in the explorer
+        if (SelectedFolder is not null && Settings.NewAssetExplorer) IsExplorerVisible = true;
         OnPropertyChanged(nameof(SelectedFolder));
         OnPropertyChanged(nameof(PackagesHeader));
         OnPropertyChanged(nameof(FolderSummary));
@@ -637,6 +672,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         if (_archive is null) return;
 
+        IsExplorerVisible = false;
         var tab = TargetTab(newTab);
         tab.Reset(file);
         var cts = tab.Loading = new CancellationTokenSource();
@@ -673,6 +709,7 @@ public sealed partial class MainViewModel : ObservableObject
             if (mesh is not null) await PreviewMeshAsync(mesh);
             if (Settings.PreviewAnimations && result.Animation is { } animation) await PreviewAnimationAsync(animation);
             if (Settings.PreviewWorlds && result.World is { } world) await PreviewMapAsync(world);
+            if (Settings.PreviewMaterials && mesh is null && result.Material is { } material) await PreviewMaterialAsync(material);
         }
         catch (OperationCanceledException)
         {
@@ -722,6 +759,7 @@ public sealed partial class MainViewModel : ObservableObject
                 SetStatus(StatusKind.Completed, "Completed");
                 return;
             }
+            IsExplorerVisible = false;
             var tab = TargetTab(newTab: SelectedTab?.Entry is not null);
             tab.Reset(file);
             tab.Header = $"{file.Name} ({kind})";
@@ -777,7 +815,8 @@ public sealed partial class MainViewModel : ObservableObject
         SetStatus(StatusKind.Loading, $"Loading {mesh.Name} in the 3D viewer");
         try
         {
-            var model = await Task.Run(() => ViewerModel.FromExport(mesh));
+            var context = ViewerContext();
+            var model = await Task.Run(() => ViewerModel.FromExport(mesh, context));
             ModelReady?.Invoke(model);
             Log(LogKind.Information, model is { VertexCount: 0, Bones: { } bones }
                 ? $"Loaded skeleton '{model.Name}' in the 3D viewer ({bones.Length:N0} bones)"
@@ -788,6 +827,34 @@ public sealed partial class MainViewModel : ObservableObject
         catch (Exception e)
         {
             Serilog.Log.Error(e, "Could not load {Mesh} in the 3D viewer", mesh.GetPathName());
+            Log(LogKind.Error, $"3D viewer: {e.Message}");
+            SetStatus(StatusKind.Failed, "Failed");
+        }
+    }
+
+    /// <summary>Settings › Preview's texture size and the game's texture platform, for what the 3D viewer loads.</summary>
+    private ViewerLoadContext ViewerContext() => new(Settings.PreviewMaxTextureSize, Settings.CurrentVersioning.PlatformValue);
+
+    /// <summary>
+    /// Raised on the UI thread with a material for the 3D viewer: the handler swaps it into the section waiting for
+    /// one (FModel's material overwrite) or shows it on a cube.
+    /// </summary>
+    public event Action<ViewerMaterial, ViewerModel>? MaterialReady;
+
+    // FModel previews material instances on the editor's cube
+    public async Task PreviewMaterialAsync(UMaterialInterface material)
+    {
+        SetStatus(StatusKind.Loading, $"Loading {material.Name} in the 3D viewer");
+        try
+        {
+            var context = ViewerContext();
+            var (resolved, cube) = await Task.Run(() => (ViewerModel.ResolveMaterial(material, context), ViewerModel.FromMaterial(material, context)));
+            MaterialReady?.Invoke(resolved, cube);
+            SetStatus(StatusKind.Completed, "Completed");
+        }
+        catch (Exception e)
+        {
+            Serilog.Log.Error(e, "Could not load {Material} in the 3D viewer", material.GetPathName());
             Log(LogKind.Error, $"3D viewer: {e.Message}");
             SetStatus(StatusKind.Failed, "Failed");
         }
@@ -804,7 +871,8 @@ public sealed partial class MainViewModel : ObservableObject
         var watch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            var map = await Task.Run(() => MapLoader.Load(world, progress));
+            var context = ViewerContext();
+            var map = await Task.Run(() => MapLoader.Load(world, progress, context: context));
             MapReady?.Invoke(map);
             Log(LogKind.Information, $"Loaded map '{map[0].Name}' in the 3D viewer in {watch.Elapsed.TotalSeconds:0.0}s: {map[0].Details[6..]}" +
                                      (map.Length > 1 ? $" (sky and backdrops hidden: {map[1].Details})" : ""));

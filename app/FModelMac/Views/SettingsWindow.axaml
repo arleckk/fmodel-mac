@@ -86,12 +86,20 @@
                 <Border Background="{StaticResource Layer2BackgroundBrush}" Padding="10">
                     <StackPanel>
                         <c:SectionSeparator Text="3D VIEWER" Margin="0,0,0,8" />
+                        <Grid ColumnDefinitions="150,10,*,10,50" Margin="0,0,0,8">
+                            <TextBlock Text="Preview Max Texture Size" VerticalAlignment="Center" />
+                            <Slider x:Name="PreviewTextureSizeSlider" Grid.Column="2" Minimum="4" Maximum="4096" IsSnapToTickEnabled="True"
+                                    Ticks="4,8,16,32,64,128,256,512,1024,2048,4096" TickPlacement="None" />
+                            <TextBlock Grid.Column="4" VerticalAlignment="Center" HorizontalAlignment="Right"
+                                       Text="{Binding #PreviewTextureSizeSlider.Value, StringFormat='{}{0:0} px'}" />
+                        </Grid>
                         <CheckBox x:Name="PreviewStaticBox" Margin="160,0,0,0" Content="Preview Static Meshes" />
                         <CheckBox x:Name="PreviewSkeletalBox" Margin="160,4,0,0" Content="Preview Skeletal Meshes" />
                         <CheckBox x:Name="PreviewAnimationsBox" Margin="160,4,0,0" Content="Preview Animations" />
+                        <CheckBox x:Name="PreviewMaterialsBox" Margin="160,4,0,0" Content="Preview Materials" />
                         <CheckBox x:Name="PreviewWorldsBox" Margin="160,4,0,0" Content="Preview Worlds (.umap)" />
                         <TextBlock Classes="dim" FontSize="11" Margin="160,4,0,0" TextWrapping="Wrap"
-                                   Text="Double-clicking a package of that kind also opens it in Views › 3D Viewer. Animations play on the mesh selected in the viewer." />
+                                   Text="Double-clicking a package of that kind also opens it in Views › 3D Viewer. Animations play on the mesh selected in the viewer; materials show on a cube, or replace the material of the section whose overwrite button is on. Maps keep their textures at 512 px at most." />
 
                         <c:SectionSeparator Text="SKELETONS" />
                         <CheckBox x:Name="SkeletonAsMeshBox" Margin="160,0,0,0" Content="Handle Skeletons as Empty Meshes" />
