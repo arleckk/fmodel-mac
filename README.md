@@ -1,5 +1,7 @@
 # FModel for macOS
 
+[![Build](https://github.com/arleckk/fmodel-mac/actions/workflows/build.yml/badge.svg)](https://github.com/arleckk/fmodel-mac/actions/workflows/build.yml)
+
 An **unofficial** native macOS (Apple Silicon) port of [FModel](https://github.com/4sval/FModel), the
 archive explorer for Unreal Engine games, built on [CUE4Parse](https://github.com/FabianFG/CUE4Parse)
 with an [Avalonia](https://avaloniaui.net) UI. The app is called **FModel** and follows the original's
