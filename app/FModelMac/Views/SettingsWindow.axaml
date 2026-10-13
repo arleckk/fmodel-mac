@@ -1,0 +1,81 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:c="using:FModelMac.Controls"
+        x:Class="FModelMac.Views.SettingsWindow"
+        Title="Settings"
+        Width="620" SizeToContent="Height" CanResize="False"
+        WindowStartupLocation="CenterOwner">
+    <StackPanel>
+        <Border Background="{StaticResource Layer2BackgroundBrush}" Margin="10,10,10,18" Padding="10">
+            <StackPanel>
+                <c:SectionSeparator Text="GENERAL" Margin="0,0,0,8" />
+                <Grid ColumnDefinitions="140,10,*,5,Auto">
+                    <TextBlock Text="Output Directory" VerticalAlignment="Center" />
+                    <TextBox x:Name="OutputBox" Grid.Column="2" />
+                    <Button Grid.Column="4" Content="..." Click="OnBrowseOutputClick" />
+                </Grid>
+                <TextBlock Classes="dim" FontSize="11" Margin="150,4,0,0" TextWrapping="Wrap"
+                           Text="Properties and textures are saved under Exports, mirroring the package path." />
+
+                <c:SectionSeparator Text="MODELS" />
+                <Grid ColumnDefinitions="140,10,*">
+                    <TextBlock Text="Mesh Export Format" VerticalAlignment="Center" />
+                    <ComboBox x:Name="MeshFormatBox" Grid.Column="2" HorizontalAlignment="Stretch" />
+                </Grid>
+                <CheckBox x:Name="PreviewMeshesBox" Margin="150,6,0,0" Content="Open meshes in the 3D viewer when extracting them" />
+                <TextBlock Classes="dim" FontSize="11" Margin="150,4,0,0" TextWrapping="Wrap"
+                           Text="glTF opens in Blender and most 3D apps. Animations fall back to USD when the format can't hold them, and worlds are always USD." />
+
+                <c:SectionSeparator Text="AUDIO" />
+                <Grid ColumnDefinitions="140,10,*">
+                    <TextBlock Text="Audio Export Format" VerticalAlignment="Center" />
+                    <ComboBox x:Name="AudioFormatBox" Grid.Column="2" HorizontalAlignment="Stretch">
+                        <ComboBoxItem Content="Convert to .wav" />
+                        <ComboBoxItem Content="Keep the original format (.wem, .ogg, .binka…)" />
+                    </ComboBox>
+                </Grid>
+                <CheckBox x:Name="PlayAudioBox" Margin="150,6,0,0" Content="Play sounds in the Audio Player when extracting them" />
+                <Grid ColumnDefinitions="140,10,*" Margin="0,8,0,0">
+                    <TextBlock Text="CRIWARE Key" VerticalAlignment="Center" />
+                    <TextBox x:Name="CriwareBox" Grid.Column="2" Watermark="Optional HCA/ADX decryption key (decimal or 0x…)" />
+                </Grid>
+                <Grid ColumnDefinitions="140,10,*,5,Auto" Margin="0,8,0,0">
+                    <TextBlock Text="vgmstream" VerticalAlignment="Center" />
+                    <TextBlock x:Name="VgmstreamText" Grid.Column="2" VerticalAlignment="Center" TextWrapping="Wrap" />
+                    <Button x:Name="VgmstreamButton" Grid.Column="4" Content="Copy Install Command" Click="OnCopyVgmstreamClick" />
+                </Grid>
+                <TextBlock Classes="dim" FontSize="11" Margin="150,4,0,0" TextWrapping="Wrap"
+                           Text="Wwise (.wem), Bink, Opus, AT9 and other game codecs are decoded with vgmstream, included with the app (a Homebrew install is used if it's missing). Ogg, WAV and CRIWARE are decoded by the app itself." />
+
+                <c:SectionSeparator Text="ENDPOINTS" />
+                <Grid ColumnDefinitions="140,10,*,5,Auto" RowDefinitions="Auto,6,Auto">
+                    <TextBlock Text="AES Endpoint" VerticalAlignment="Center" />
+                    <TextBlock x:Name="AesEndpointText" Grid.Column="2" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                    <Button Grid.Column="4" Content="Configure…" Click="OnAesEndpointClick" />
+                    <TextBlock Grid.Row="2" Text="Mapping Endpoint" VerticalAlignment="Center" />
+                    <TextBlock x:Name="MappingEndpointText" Grid.Row="2" Grid.Column="2" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                    <Button Grid.Row="2" Grid.Column="4" Content="Configure…" Click="OnMappingEndpointClick" />
+                </Grid>
+                <TextBlock Classes="dim" FontSize="11" Margin="150,4,0,0" TextWrapping="Wrap"
+                           Text="Checked every time the game is mounted: the AES endpoint replaces the saved keys, the mapping is downloaded once and cached. Presets for Fortnite and VALORANT, like FModel." />
+
+                <c:SectionSeparator Text="MAPPINGS" />
+                <Grid ColumnDefinitions="140,10,*,5,Auto,5,Auto">
+                    <TextBlock Text="Mapping File" VerticalAlignment="Center" />
+                    <TextBox x:Name="UsmapBox" Grid.Column="2" Watermark="Optional local .usmap / .jmap (wins over the endpoint)" />
+                    <Button Grid.Column="4" Content="..." Click="OnBrowseUsmapClick" />
+                    <Button Grid.Column="6" Classes="toolbar" ToolTip.Tip="Clear" Click="OnClearUsmapClick">
+                        <c:Glyph Data="{StaticResource RemoveIcon}" />
+                    </Button>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <Border Background="{StaticResource Layer1BackgroundBrush}">
+            <Grid ColumnDefinitions="*,Auto,Auto" Margin="30,12,6,12">
+                <Button Grid.Column="1" MinWidth="78" Margin="0,0,12,0" Content="OK" IsDefault="True" Click="OnOkClick" />
+                <Button Grid.Column="2" MinWidth="78" Margin="0,0,12,0" Content="Cancel" IsCancel="True" Click="OnCancelClick" />
+            </Grid>
+        </Border>
+    </StackPanel>
+</Window>

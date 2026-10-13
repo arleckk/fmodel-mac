@@ -1,0 +1,140 @@
+diff --git a/CUE4Parse-Conversion/Dto/ActorDto.cs b/CUE4Parse-Conversion/Dto/ActorDto.cs
+index 111a94035b8c8a8fbd7f73e092dd27dca1d2fb2b..d48d94068342b491a7aeea3972078ca041f0256b 100644
+--- a/CUE4Parse-Conversion/Dto/ActorDto.cs
++++ b/CUE4Parse-Conversion/Dto/ActorDto.cs
+@@ -45,11 +45,20 @@ private ActorDto(UObject actor, WorldParseContext ctx) : this(actor)
+                 StreamingLevels.Add(new StreamingLevel(w, true));
+             }
+         }
++
++        // level instances that stream their level at runtime (packed level actors bake it into ISMs and don't cook it)
++        if (actor.TryGetValue(out FSoftObjectPath levelInstance, "CookedWorldAsset", "WorldAsset") &&
++            !actor.ExportType.Contains("PackedLevel", StringComparison.OrdinalIgnoreCase) &&
++            levelInstance.TryLoad<UWorld>(out var instanceWorld))
++        {
++            StreamingLevels ??= [];
++            StreamingLevels.Add(new StreamingLevel(instanceWorld, true));
++        }
+     }
+ 
+     internal static ActorDto Create(UObject actor, WorldParseContext ctx) => actor switch
+     {
+-        AWorldSettings ws => new WorldSettingsDto(ws),
++        AWorldSettings ws => new WorldSettingsDto(ws, ctx.ExpandWorldPartition),
+         AGeneratedMeshActor gma => new GeneratedMeshActorDto(gma, ctx),
+         _ => new ActorDto(actor, ctx)
+     };
+diff --git a/CUE4Parse-Conversion/Dto/ActorStreamingDto.cs b/CUE4Parse-Conversion/Dto/ActorStreamingDto.cs
+index ba2ca5d5d4af4b5995b8958bcf1180449bad6fcc..98ad8040509867d8317f2f849070f08568859c7c 100644
+--- a/CUE4Parse-Conversion/Dto/ActorStreamingDto.cs
++++ b/CUE4Parse-Conversion/Dto/ActorStreamingDto.cs
+@@ -8,11 +8,12 @@ namespace CUE4Parse_Conversion.Dto;
+ 
+ public class WorldSettingsDto : ActorDto
+ {
+-    internal WorldSettingsDto(AWorldSettings worldSettings) : base(worldSettings)
++    internal WorldSettingsDto(AWorldSettings worldSettings, bool expandWorldPartition = true) : base(worldSettings)
+     {
+         RootComponent = new SceneComponentDto(FTransform.Identity, "SceneComponent", this);
+ 
+-        if (worldSettings.WorldPartition?.TryLoad<UWorldPartition>(out var partition) == true &&
++        if (expandWorldPartition &&
++            worldSettings.WorldPartition?.TryLoad<UWorldPartition>(out var partition) == true &&
+             partition.RuntimeHash?.TryLoad<UWorldPartitionRuntimeHash>(out var runtimeHash) == true)
+         {
+             RootComponent.AttachedActors.Add(new RuntimeHashActorDto(runtimeHash));
+diff --git a/CUE4Parse-Conversion/Dto/ComponentDto.cs b/CUE4Parse-Conversion/Dto/ComponentDto.cs
+index be9018fba3d920dbb90082bf432f0ef6d639a382..f97365e747aa40ce8f58b304615a597e2d2eab55 100644
+--- a/CUE4Parse-Conversion/Dto/ComponentDto.cs
++++ b/CUE4Parse-Conversion/Dto/ComponentDto.cs
+@@ -184,6 +184,7 @@ public class LandscapeMeshComponentDto : PrimitiveComponentDto
+ 
+     public readonly ALandscapeProxy? OuterProxy;
+     internal readonly ULandscapeComponent _component;
++    public ULandscapeComponent Component => _component; // lets viewers build the terrain per component
+ 
+     public LandscapeMeshComponentDto(ULandscapeComponent component, ActorDto owner) : base(component, owner)
+     {
+diff --git a/CUE4Parse-Conversion/Dto/WorldDto.cs b/CUE4Parse-Conversion/Dto/WorldDto.cs
+index 271331f00f2afdac05be8fb07a6370161feafa39..17261ac493d45278626d28222a2f64304aa527be 100644
+--- a/CUE4Parse-Conversion/Dto/WorldDto.cs
++++ b/CUE4Parse-Conversion/Dto/WorldDto.cs
+@@ -15,6 +15,12 @@ public class WorldDto : ObjectDto
+ 
+     }
+ 
++    public WorldDto(UWorld world, bool expandWorldPartition, CancellationToken ct = default)
++        : this(world, new WorldParseContext { ExpandWorldPartition = expandWorldPartition }, ct)
++    {
++
++    }
++
+     private WorldDto(UWorld world, WorldParseContext ctx, CancellationToken ct = default) : base(world)
+     {
+         var level = world.PersistentLevel.Load<ULevel>();
+diff --git a/CUE4Parse-Conversion/Dto/WorldParseContext.cs b/CUE4Parse-Conversion/Dto/WorldParseContext.cs
+index 270936b11f663a4fed658ca73d1ea859f895b6c4..6aa282a5ed0c65e6ee821ab13cf0b94292deeca7 100644
+--- a/CUE4Parse-Conversion/Dto/WorldParseContext.cs
++++ b/CUE4Parse-Conversion/Dto/WorldParseContext.cs
+@@ -12,6 +12,12 @@ namespace CUE4Parse_Conversion.Dto;
+ 
+ internal sealed class WorldParseContext
+ {
++    /// <summary>
++    /// when false, World Partition runtime cells are not loaded through the world settings actor
++    /// (callers that walk the runtime hash themselves)
++    /// </summary>
++    public bool ExpandWorldPartition { get; init; } = true;
++
+     /// <summary>
+     /// flattened list of resolved components keyed by their unresolved pointer
+     /// </summary>
+diff --git a/CUE4Parse-Conversion/ExportSession.cs b/CUE4Parse-Conversion/ExportSession.cs
+index 48e8e14b5bdb812ffb01fb110aa183aba5ee5c87..743e7dfbf224f3e2f4175fd15828a4895a8248af 100644
+--- a/CUE4Parse-Conversion/ExportSession.cs
++++ b/CUE4Parse-Conversion/ExportSession.cs
+@@ -169,7 +169,8 @@ internal string ResolveOutputPath(string savePath, string ext, string? nameSuffi
+         var fullPath = Path.Combine(BaseDirectory.FullName, savePath) + nameSuffix + '.' + ext.ToLower();
+         var dir = Path.GetDirectoryName(fullPath) ?? throw new InvalidOperationException($"Cannot determine directory for path: {fullPath}");
+         Directory.CreateDirectory(dir);
+-        return fullPath.Replace('/', '\\');
++        // Only Windows accepts '\' as a separator; on macOS/Linux it would become part of the file name
++        return OperatingSystem.IsWindows() ? fullPath.Replace('/', '\\') : fullPath;
+     }
+ 
+     public event PropertyChangedEventHandler? PropertyChanged;
+diff --git a/CUE4Parse-Natives/CMakeLists.txt b/CUE4Parse-Natives/CMakeLists.txt
+index abfca03c2213c9a64738cc286c39c9127865398f..0f625446e87cba9bdb8020a4e869804e28be5ba6 100644
+--- a/CUE4Parse-Natives/CMakeLists.txt
++++ b/CUE4Parse-Natives/CMakeLists.txt
+@@ -3,6 +3,10 @@ project(CUE4Parse-Natives CXX)
+ 
+ set(CMAKE_CXX_STANDARD 11)
+ 
++# Newer Clang (Apple clang 17+) errors on ACL's `X::template f(...)` calls without a template argument list
++if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
++    add_compile_options(-Wno-missing-template-arg-list-after-template-kw)
++endif()
+ 
+ if (EXISTS "${PROJECT_SOURCE_DIR}/ACL/external/acl/includes")
+     set(WITH_ACL 1)
+diff --git a/CUE4Parse/UE4/Objects/Engine/Animation/FBlendParameter.cs b/CUE4Parse/UE4/Objects/Engine/Animation/FBlendParameter.cs
+index eec9055d538b929ce7ba4567e05c43daec97fd80..50b3aee2008e5a5bff7b2847db98f18bafa54079 100644
+--- a/CUE4Parse/UE4/Objects/Engine/Animation/FBlendParameter.cs
++++ b/CUE4Parse/UE4/Objects/Engine/Animation/FBlendParameter.cs
+@@ -45,10 +45,11 @@ public FBlendParameter()
+ 
+     public FBlendParameter(FStructFallback data) : this()
+     {
+-        DisplayName = data.GetOrDefault<string>(nameof(DisplayName));
+-        Min = data.GetOrDefault<float>(nameof(Min));
+-        Max = data.GetOrDefault<float>(nameof(Max));
+-        GridNum = data.GetOrDefault<int>(nameof(GridNum));
++        // Tagged properties equal to the class defaults aren't serialized, so fall back to UE's defaults
++        DisplayName = data.GetOrDefault(nameof(DisplayName), DisplayName);
++        Min = data.GetOrDefault(nameof(Min), Min);
++        Max = data.GetOrDefault(nameof(Max), Max);
++        GridNum = data.GetOrDefault(nameof(GridNum), GridNum);
+         bSnapToGrid = data.GetOrDefault<bool>(nameof(bSnapToGrid));
+         bWrapInput = data.GetOrDefault<bool>(nameof(bWrapInput));
+     }

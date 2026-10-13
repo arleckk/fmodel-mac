@@ -1,0 +1,655 @@
+using Avalonia;
+using Avalonia.Media;
+using Avalonia.Controls;
+using Avalonia.Headless;
+using Avalonia.Input;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
+using CommunityToolkit.Mvvm.Input;
+using CUE4Parse.FileProvider.Objects;
+using FModelMac;
+using FModelMac.Rendering;
+using CUE4Parse.UE4.Assets.Exports.Animation;
+using CUE4Parse.UE4.Objects.Engine.Animation;
+using FModelMac.Services;
+using FModelMac.ViewModels;
+using FModelMac.Views;
+
+// Drives the real windows headlessly (Skia rendering, no screen) against the CUE4Parse test
+// fixtures and saves screenshots, so the UI can be checked without a display session.
+// "--export <paks dir> <EGame> <aes> <outdir> [count]" instead exercises Export › Model/Animation
+// on a real game, sampling packages by their usual name prefixes.
+if (args is ["--export", var paks, var gameVersion, var aesKey, var exportOut, ..])
+{
+    var count = args.Length > 5 ? int.Parse(args[5]) : 3;
+    exportOut = Path.GetFullPath(exportOut);
+    Environment.SetEnvironmentVariable("FMODELMAC_DATA_DIR", Path.Combine(exportOut, "data"));
+    new AppSettings { ArchiveDir = paks, Game = gameVersion, AesKey = aesKey, OutputDir = exportOut }.Save();
+    RunOnUiThread(SnapshotApp.BuildAvaloniaApp(), () => ExportTestAsync(count), TimeSpan.FromMinutes(10));
+    return;
+}
+
+// "--audio <outdir> <paks dir> <EGame> <aes|-> <package|file>..." extracts and decodes sounds, saves them as WAV and
+// plays a second of each (muted) through the macOS audio output
+if (args is ["--audio", var audioOut, var audioPaks, var audioGame, var audioAes, ..])
+{
+    audioOut = Path.GetFullPath(audioOut);
+    Directory.CreateDirectory(audioOut);
+    Environment.SetEnvironmentVariable("FMODELMAC_DATA_DIR", Path.Combine(audioOut, "data"));
+    new AppSettings { ArchiveDir = audioPaks, Game = audioGame, AesKey = audioAes == "-" ? null : audioAes, UsmapPath = Environment.GetEnvironmentVariable("FMODELMAC_USMAP") }.Save();
+    var avm = new MainViewModel();
+    avm.InitializeGameAsync().GetAwaiter().GetResult();
+    var extractor = new FModelMac.Services.Audio.SoundExtractor(avm.Archive!.Provider, audioPaks);
+    Console.WriteLine($"vgmstream: {FModelMac.Services.Audio.Vgmstream.Locate() ?? "missing"}");
+    Console.WriteLine($"devices: {string.Join(", ", FModelMac.Services.Audio.AudioOutput.OutputDevices().Select(d => d.Name))}; " +
+                      $"default {FModelMac.Services.Audio.AudioOutput.DefaultOutputUid()}");
+    using var output = new FModelMac.Services.Audio.AudioOutput { Volume = 0 };
+    foreach (var path in args[5..])
+    {
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        if (!avm.Archive.Provider.TryGetGameFile(path, out var gameFile)) { Console.WriteLine($"missing {path}"); continue; }
+        var sounds = gameFile.IsUePackage
+            ? extractor.FromExports(gameFile, avm.Archive.Provider.LoadPackage(gameFile).GetExports().ToArray())
+            : extractor.FromFile(gameFile, out _);
+        foreach (var warning in extractor.Warnings) Console.WriteLine($"  warning: {warning}");
+        foreach (var sound in sounds)
+        {
+            try
+            {
+                var pcm = FModelMac.Services.Audio.AudioDecoder.Decode(sound.Data, sound.Extension);
+                var peak = pcm.Samples.Length == 0 ? 0 : pcm.Samples.Max(MathF.Abs);
+                var wav = Path.Combine(audioOut, sound.Name + ".wav");
+                File.WriteAllBytes(wav, FModelMac.Services.Audio.AudioDecoder.ToWav(pcm));
+                Console.WriteLine($"{sound.Path} [{sound.Extension}, {sound.Data.Length / 1024} KB] -> {pcm.Encoding}, {pcm.Channels} ch, " +
+                                  $"{pcm.SampleRate} Hz, {pcm.Duration.TotalSeconds:0.00} s, peak {peak:0.00}, decoded in {watch.ElapsedMilliseconds} ms");
+                var ended = false;
+                output.Ended += () => ended = true;
+                output.Load(pcm);
+                output.Play();
+                Thread.Sleep(400);
+                output.Pause();
+                var paused = output.Position;
+                Thread.Sleep(200);
+                Console.WriteLine($"    played to {paused.TotalSeconds:0.00} s, still {output.Position.TotalSeconds:0.00} s after pausing");
+                output.Seek(pcm.Duration - TimeSpan.FromSeconds(0.3));
+                output.Play();
+                Thread.Sleep(700);
+                Console.WriteLine($"    seek near the end -> ended={ended}, position {output.Position.TotalSeconds:0.00}/{pcm.Duration.TotalSeconds:0.00} s");
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"{sound.Path} [{sound.Extension}]: {e.GetType().Name}: {e.Message}");
+            }
+            watch.Restart();
+        }
+    }
+    return;
+}
+
+// "--endpoints <outdir>" exercises the AES/mapping endpoints (uedb.dev presets), the mapping cache and fallback,
+// and renders the endpoint editor headless after a Test
+if (args is ["--endpoints", var endpointsOut])
+{
+    endpointsOut = Path.GetFullPath(endpointsOut);
+    Environment.SetEnvironmentVariable("FMODELMAC_DATA_DIR", Path.Combine(endpointsOut, "data"));
+    foreach (var preset in Endpoints.Presets)
+    {
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var aes = Endpoints.GetAesAsync(preset.Aes).GetAwaiter().GetResult();
+        Console.WriteLine($"{preset.Name} AES: valid {aes.IsValid}, main {(aes.MainKey.Length > 10 ? aes.MainKey[..10] + "…" : "(none)")}, " +
+                          $"{aes.DynamicKeys.Count} dynamic ({string.Join(", ", aes.DynamicKeys.Take(2).Select(k => $"{k.Name ?? "?"} {k.Guid[..8]}…"))}) in {watch.ElapsedMilliseconds} ms");
+        watch.Restart();
+        var (path, source) = Endpoints.ResolveMappingAsync(preset.Mapping).GetAwaiter().GetResult();
+        Console.WriteLine($"{preset.Name} mapping: {source} in {watch.ElapsedMilliseconds} ms");
+        if (path is not null)
+        {
+            var mappings = Endpoints.OpenMappings(path);
+            Console.WriteLine($"    parsed: {mappings.MappingsForGame?.Types.Count:N0} types, {mappings.MappingsForGame?.Enums.Count:N0} enums");
+        }
+        watch.Restart();
+        (_, source) = Endpoints.ResolveMappingAsync(preset.Mapping).GetAwaiter().GetResult();
+        Console.WriteLine($"    again: {source} in {watch.ElapsedMilliseconds} ms");
+    }
+    var broken = new EndpointConfig { Url = "https://uedb.dev/svc/api/v1/doesnotexist/mappings", Path = "$.mappings.ZStandard", IsValid = true };
+    Console.WriteLine($"broken endpoint: {Endpoints.ResolveMappingAsync(broken).GetAwaiter().GetResult().Source}");
+    var badAes = Endpoints.ReadAes(Newtonsoft.Json.Linq.JToken.Parse("{\"mainKey\":\"not a key\"}"), "$.['mainKey','dynamicKeys']");
+    Console.WriteLine($"invalid key -> valid {badAes.IsValid}; FixKey(abc) = '{Endpoints.FixKey("abc")}'");
+
+    RunOnUiThread(SnapshotApp.BuildAvaloniaApp(), async () =>
+    {
+        var editor = new EndpointEditorWindow(null, EndpointType.Aes) { Width = 1100, Height = 680 };
+        editor.Show();
+        editor.FindControl<ComboBox>("PresetBox")!.SelectedIndex = 1;
+        editor.FindControl<Button>("TestButton")!.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        for (var i = 0; i < 100 && editor.FindControl<Button>("OkButton")!.IsEnabled == false; i++) await Task.Delay(100);
+        Console.WriteLine($"editor: OK enabled {editor.FindControl<Button>("OkButton")!.IsEnabled}, validity '{editor.FindControl<TextBlock>("ValidityText")!.Text}'");
+        Dispatcher.UIThread.RunJobs();
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        editor.CaptureRenderedFrame()?.Save(Path.Combine(endpointsOut, "endpoint-editor.png"));
+        editor.Close();
+        var settingsWindow = new SettingsWindow(new AppSettings { AesEndpoint = Endpoints.Presets[0].Aes, MappingEndpoint = Endpoints.Presets[0].Mapping });
+        settingsWindow.Show();
+        await Task.Delay(300);
+        Dispatcher.UIThread.RunJobs();
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        settingsWindow.CaptureRenderedFrame()?.Save(Path.Combine(endpointsOut, "settings-endpoints.png"));
+        settingsWindow.Close();
+    }, TimeSpan.FromMinutes(2));
+    return;
+}
+
+// "--decode <file> <format> <out.f32>" decodes one sound with AudioDecoder and writes raw float samples
+if (args is ["--decode", var decodeIn, var decodeFormat, var decodeOut])
+{
+    var pcm = FModelMac.Services.Audio.AudioDecoder.Decode(File.ReadAllBytes(decodeIn), decodeFormat);
+    var raw = new byte[pcm.Samples.Length * 4];
+    Buffer.BlockCopy(pcm.Samples, 0, raw, 0, raw.Length);
+    File.WriteAllBytes(decodeOut, raw);
+    Console.WriteLine($"{pcm.Encoding}, {pcm.Channels} ch, {pcm.SampleRate} Hz, {pcm.Frames} frames");
+    return;
+}
+
+// "--audio-ui <outdir> <paks dir> <EGame> <aes|-> <package|file>..." renders the Audio Player (headless) while the
+// first sound plays muted, plus the Settings window with its AUDIO section
+if (args is ["--audio-ui", var uiOut, var uiPaks, var uiGame, var uiAes, ..])
+{
+    uiOut = Path.GetFullPath(uiOut);
+    Directory.CreateDirectory(uiOut);
+    Environment.SetEnvironmentVariable("FMODELMAC_DATA_DIR", Path.Combine(uiOut, "data"));
+    new AppSettings { ArchiveDir = uiPaks, Game = uiGame, AesKey = uiAes == "-" ? null : uiAes, OutputDir = uiOut,
+        UsmapPath = Environment.GetEnvironmentVariable("FMODELMAC_USMAP"), AudioVolume = 0 }.Save();
+    var uiPackages = args[5..];
+    RunOnUiThread(SnapshotApp.BuildAvaloniaApp(), async () =>
+    {
+        void Shot(TopLevel top, string name)
+        {
+            Dispatcher.UIThread.RunJobs();
+            AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+            top.CaptureRenderedFrame()?.Save(Path.Combine(uiOut, name));
+            Console.WriteLine($"Saved {name}");
+        }
+
+        var vm = new MainViewModel();
+        var window = new MainWindow { DataContext = vm, Width = 1400, Height = 850 };
+        window.Show(); // OnOpened mounts the game
+        for (var i = 0; i < 600 && !(vm.Archives.Count > 0 && vm.IsReady); i++) await Task.Delay(100);
+        foreach (var package in uiPackages)
+        {
+            if (!vm.Archive!.Provider.TryGetGameFile(package, out var file)) { Console.WriteLine($"missing {package}"); continue; }
+            await vm.ExtractAsync(file);
+        }
+        var player = window.ShowAudioPlayer();
+        Console.WriteLine($"playlist: {player.Tracks.Count} ({string.Join(", ", player.Tracks.Select(t => t.Name))}); " +
+                          $"devices: {player.Devices.Count}; playing {player.Current?.Name} = {player.IsPlaying}");
+        foreach (var log in vm.Logs.TakeLast(6)) Console.WriteLine($"  log: {log.Kind} {log.Message}");
+        await Task.Delay(1500);
+        var audioWindow = window.AudioPlayerView;
+        if (audioWindow is not null)
+        {
+            audioWindow.Width = 1100;
+            audioWindow.Height = 580;
+            Shot(audioWindow, "audio-player.png");
+            player.Seek(0.5);
+            await Task.Delay(800);
+            Console.WriteLine($"after seek to 50%: {player.Position.TotalSeconds:0.00}/{player.Audio?.Duration.TotalSeconds:0.00} s, playing {player.IsPlaying}");
+            player.Filter = "Mega";
+            Console.WriteLine($"filter 'Mega' -> {player.VisibleTracks.Count} visible");
+            Shot(audioWindow, "audio-player-filtered.png");
+            player.Filter = "";
+            await player.SavePlaylistCommand.ExecuteAsync(null);
+            Console.WriteLine($"saved playlist, last: {player.LastSavedPath}");
+        }
+        var settings = new SettingsWindow(vm.Settings);
+        settings.Show();
+        await Task.Delay(300);
+        Shot(settings, "settings-audio.png");
+        settings.Close();
+        window.Close();
+    }, TimeSpan.FromMinutes(3));
+    return;
+}
+
+// "--json <paks dir> <EGame> <aes|-> <package>..." prints the exports as FModel's JSON (for inspecting assets)
+if (args is ["--json", var jsonPaks, var jsonGame, var jsonAes, ..])
+{
+    var jsonOut = Path.Combine(Path.GetTempPath(), "fmodelmac-json");
+    Environment.SetEnvironmentVariable("FMODELMAC_DATA_DIR", jsonOut);
+    new AppSettings
+    {
+        ArchiveDir = jsonPaks, Game = jsonGame, AesKey = jsonAes == "-" ? null : jsonAes,
+        UsmapPath = Environment.GetEnvironmentVariable("FMODELMAC_USMAP")
+    }.Save();
+    var vm = new MainViewModel();
+    vm.InitializeGameAsync().GetAwaiter().GetResult();
+    var jsonProvider = vm.Archive!.Provider;
+    if (args[4..] is ["--list-maps"])
+    {
+        foreach (var map in jsonProvider.Files.Values.Where(f => f.Extension == "umap").OrderBy(f => f.Path))
+            Console.WriteLine($"{map.Path} {map.Size / 1024} KB");
+        return;
+    }
+
+    // "--json ... --list-files <regex>" lists matching files plus a count per extension
+    if (args[4..] is ["--list-files", var pattern])
+    {
+        var regex = new System.Text.RegularExpressions.Regex(pattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var matches = jsonProvider.Files.Values.Where(f => regex.IsMatch(f.Path)).DistinctBy(f => f.Path).OrderBy(f => f.Path).ToArray();
+        foreach (var group in matches.GroupBy(f => f.Extension).OrderByDescending(g => g.Count()))
+            Console.WriteLine($"EXT {group.Key}: {group.Count()}");
+        foreach (var file in matches.Take(400)) Console.WriteLine($"{file.Path} {file.Size / 1024} KB");
+        return;
+    }
+
+    // "--json ... --scan-morphs" lists skeletal meshes that have morph targets
+    if (args[4..] is ["--scan-morphs"])
+    {
+        var candidates = jsonProvider.Files.Values.Where(f => f.Extension == "uasset" && f.Path.StartsWith("Game/") &&
+            !f.Name.StartsWith("T_") && !f.Name.StartsWith("MI_") && !f.Name.StartsWith("M_") &&
+            !f.Path.Contains("/Sound/") && !f.Path.Contains("/2dAsset/") && !f.Path.Contains("/Luac/") && !f.Path.Contains("/Effect/")).ToArray();
+        Console.WriteLine($"Scanning {candidates.Length} packages");
+        int skeletal = 0, failed = 0;
+        foreach (var file in candidates)
+        {
+            try
+            {
+                foreach (var mesh in jsonProvider.LoadPackage(file).GetExports().OfType<CUE4Parse.UE4.Assets.Exports.SkeletalMesh.USkeletalMesh>())
+                {
+                    skeletal++;
+                    if (mesh.MorphTargets is { Length: > 0 } morphs) Console.WriteLine($"{file.Path}: {morphs.Length} morph targets");
+                }
+            }
+            catch (Exception e)
+            {
+                if (failed++ < 3) Console.WriteLine($"{file.Path}: {e.GetType().Name} {e.Message}");
+            }
+        }
+        Console.WriteLine($"{skeletal} skeletal meshes, {failed} packages failed");
+        return;
+    }
+
+    foreach (var package in args[4..])
+    {
+        var file = jsonProvider.Files.Values.FirstOrDefault(f => f.Path.Equals(package, StringComparison.OrdinalIgnoreCase));
+        if (file is null) { Console.WriteLine($"Not found: {package}"); continue; }
+        var jsonExports = AssetPreview.LoadExports(jsonProvider, file);
+        Console.WriteLine(Newtonsoft.Json.JsonConvert.SerializeObject(jsonExports, Newtonsoft.Json.Formatting.Indented));
+        foreach (var morph in jsonExports.OfType<CUE4Parse.UE4.Assets.Exports.Animation.UMorphTarget>())
+            Console.WriteLine($"MORPH {morph.Name}: lods {morph.MorphLODModels.Length}, cpu deltas {morph.MorphLODModels.FirstOrDefault()?.Vertices.Length}, " +
+                              $"compressed {(morph.TryGetCompressedLODModel(0, out var c) ? $"{c.PackedDeltaHeaders.Length} batches, {c.PackedDeltaData.Length} words" : "none")}");
+    }
+    return;
+}
+
+// "--viewer <outdir> <paks dir> <EGame> <aes|-> <usmap|-> <package>..." opens the real OpenGL 3D viewer
+// (needs a logged-in macOS session) and saves a capture of each mesh
+if (args is ["--viewer", var viewerOut, var viewerPaks, var viewerGame, var viewerAes, var viewerUsmap, ..])
+{
+    viewerOut = Path.GetFullPath(viewerOut);
+    Directory.CreateDirectory(viewerOut);
+    Environment.SetEnvironmentVariable("FMODELMAC_DATA_DIR", Path.Combine(viewerOut, "data"));
+    new AppSettings
+    {
+        ArchiveDir = viewerPaks, Game = viewerGame,
+        AesKey = viewerAes == "-" ? null : viewerAes,
+        UsmapPath = viewerUsmap == "-" ? null : viewerUsmap,
+        OutputDir = viewerOut
+    }.Save();
+    var packages = args[6..];
+    var desktop = AppBuilder.Configure<App>().UsePlatformDetect()
+        .With(new FontManagerOptions { DefaultFamilyName = "Helvetica Neue" });
+    RunOnUiThread(desktop, () => ViewerTestAsync(viewerOut, packages), TimeSpan.FromMinutes(5));
+    return;
+}
+
+var fixtures = Path.GetFullPath(args.Length > 0 ? args[0]
+    : Path.Combine(AppContext.BaseDirectory, "../../../../../upstream/CUE4Parse/CUE4Parse.Tests/Fixtures/UE5_8"));
+var outDir = Path.GetFullPath(args.Length > 1 ? args[1] : "snapshots");
+Directory.CreateDirectory(outDir);
+
+// Isolated settings pointing at the encrypted, unversioned Oodle fixture
+var dataDir = Path.Combine(outDir, "data");
+Environment.SetEnvironmentVariable("FMODELMAC_DATA_DIR", dataDir);
+Directory.CreateDirectory(dataDir);
+new AppSettings
+{
+    ArchiveDir = Path.Combine(fixtures, "IoStore/Unversioned"),
+    Game = "GAME_UE5_8",
+    AesKey = "0x435545345061727365466978747572654145534B657930313233343536373839",
+    UsmapPath = Path.Combine(fixtures, "Mappings/CUE4ParseFixtures-Oodle.usmap"),
+    OutputDir = Path.Combine(outDir, "Output")
+}.Save();
+
+RunOnUiThread(SnapshotApp.BuildAvaloniaApp(), RunAsync, TimeSpan.FromMinutes(2));
+return;
+
+// Run Avalonia on this thread and pump its dispatcher until the scripted flow finishes
+void RunOnUiThread(AppBuilder builder, Func<Task> flow, TimeSpan timeout)
+{
+    builder.SetupWithoutStarting();
+    SynchronizationContext.SetSynchronizationContext(new AvaloniaSynchronizationContext());
+    var done = new CancellationTokenSource(timeout);
+    var run = flow();
+    run.ContinueWith(_ => done.Cancel(), TaskScheduler.Default);
+    Dispatcher.UIThread.MainLoop(done.Token);
+    if (!run.IsCompleted)
+    {
+        Console.WriteLine("Timed out waiting for the UI flow");
+        return;
+    }
+    run.GetAwaiter().GetResult();
+}
+
+async Task ViewerTestAsync(string outputDir, string[] packages)
+{
+    var vm = new MainViewModel();
+    await vm.InitializeGameAsync();
+    var provider = vm.Archive!.Provider;
+    Console.WriteLine($"Init: {vm.StatusText} | {vm.StatusExtra}");
+
+    var viewer = new ModelViewerWindow { Width = 1280, Height = 800 };
+    var ready = new TaskCompletionSource();
+    viewer.ModelViewport.RendererReady += (_, _) => ready.TrySetResult();
+    viewer.Show();
+    await Task.WhenAny(ready.Task, Task.Delay(10000));
+    Console.WriteLine($"Renderer: {viewer.ModelViewport.RendererInfo ?? "never initialized"}");
+
+    async Task Capture(string name)
+    {
+        await Task.Delay(150);
+        var shot = viewer.ModelViewport.CaptureAsync();
+        if (await Task.WhenAny(shot, Task.Delay(5000)) != shot) { Console.WriteLine("    capture timed out"); return; }
+        var path = Path.Combine(outputDir, $"{name}.png");
+        await File.WriteAllBytesAsync(path, shot.Result);
+        Console.WriteLine($"    saved {path}");
+    }
+
+    foreach (var package in packages)
+    {
+        // "morph:<name or *>=<weight>" moves morph target sliders on the current model
+        if (package.StartsWith("morph:"))
+        {
+            var (name, weight) = (package[6..].Split('=')[0], float.Parse(package.Split('=')[1], System.Globalization.CultureInfo.InvariantCulture));
+            var target = viewer.Scene.Items.LastOrDefault()?.Single;
+            foreach (var morph in target?.Model.Morphs ?? [])
+                if (name == "*" || morph.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) morph.Weight = weight;
+            await Capture($"morph-{(name == "*" ? "all" : name)}-{weight:0.##}");
+            if (target is not null)
+                Console.WriteLine($"    applied weights: [{string.Join(", ", viewer.ModelViewport.AppliedMorphWeights(target).Select(w => w.ToString("0.##")))}]");
+            continue;
+        }
+
+        // "clear" empties the scene; "capture:<name>" saves the current view
+        if (package == "clear")
+        {
+            viewer.ClearScene();
+            continue;
+        }
+        if (package.StartsWith("capture:"))
+        {
+            await Capture(package[8..]);
+            continue;
+        }
+
+        var file = provider.Files.Values.FirstOrDefault(f => f.Path.Equals(package, StringComparison.OrdinalIgnoreCase));
+        if (file is null)
+        {
+            Console.WriteLine($"Not found: {package}");
+            continue;
+        }
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var exports = AssetPreview.LoadExports(provider, file);
+        if (exports.OfType<UAnimationAsset>().FirstOrDefault(a => a is UAnimSequence or UAnimMontage or UAnimComposite or UBlendSpaceBase) is { } asset)
+        {
+            IViewerMotion motion = await Task.Run<IViewerMotion>(() => asset is UBlendSpaceBase bs ? ViewerBlendSpace.FromExport(bs) : ViewerAnimation.FromExport(asset));
+            var error = viewer.PlayAnimation(motion);
+            viewer.Pause();
+            Console.WriteLine($"{motion.Name}: {motion.Clips.Count} clip(s) [{string.Join(", ", motion.Clips.Select(c => $"{c.Name} {c.Duration:0.00}s"))}], " +
+                              $"skeleton {motion.SkeletonName}, curves {motion.Clips.Sum(c => c.Segments.Sum(sg => sg.Curves.Length))}, decoded in {watch.ElapsedMilliseconds} ms" +
+                              (error is null ? "" : $" -> {error}"));
+            if (error is not null) continue;
+
+            if (motion is ViewerBlendSpace blendSpace)
+            {
+                Console.WriteLine($"    axes: {string.Join(", ", blendSpace.Axes.Select(x => $"{x.Name} {x.Min}..{x.Max} grid {x.GridNum}"))}; " +
+                                  $"samples at {string.Join(" ", blendSpace.SampleValues.Select(v => $"({v.X},{v.Y})"))}; grid points {blendSpace.Grid.Length}");
+                var ax = blendSpace.Axes[0];
+                var ay = blendSpace.Axes.Length > 1 ? blendSpace.Axes[1] : null;
+                var points = ay is null
+                    ? new[] { 0f, 0.25f, 0.5f, 1f }.Select(f => (ax.Min + (ax.Max - ax.Min) * f, 0f)).ToArray()
+                    : [(ax.Min, ay.Min), (90f, ay.Min), (-45f, ay.Max), (135f, (ay.Min + ay.Max) / 2), (ax.Max, ay.Max)];
+                var step = 0;
+                foreach (var (x, y) in points)
+                {
+                    var f = step++ / 4f;
+                    viewer.SetBlendParameters(x, y);
+                    viewer.Seek(viewer.AnimationTime); // keep phase
+                    var weights = blendSpace.Weights(x, y);
+                    Console.WriteLine($"    params ({x:0.#},{y:0.#}) -> " + string.Join(", ", weights.Select((w, i) => (w, i)).Where(p => p.w > 0.005f)
+                        .Select(p => $"{blendSpace.Samples[p.i].Name}@({blendSpace.SampleValues[p.i].X:0},{blendSpace.SampleValues[p.i].Y:0}) {p.w:0.00}")));
+                    await Capture($"bs-{blendSpace.Name}-{f:0.00}");
+                }
+            }
+            else
+            {
+                var animation = (ViewerAnimation) motion;
+                viewer.ModelViewport.ShowBones = true;
+                for (var step = 0; step < 4; step++)
+                {
+                    viewer.Seek(animation.Duration * step / 4);
+                    Console.WriteLine($"    t={viewer.AnimationTime:0.00}s");
+                    await Capture($"anim-{animation.Name}-{step}");
+                }
+                viewer.ModelViewport.ShowBones = false;
+            }
+
+            // Real-time playback driven by the window's clock
+            viewer.PlayAnimation(motion);
+            await Task.Delay(600);
+            Console.WriteLine($"    playing 0.6 s of wall time -> t={viewer.AnimationTime:0.00}s");
+            continue;
+        }
+
+        if (exports.OfType<CUE4Parse.UE4.Objects.Engine.UWorld>().FirstOrDefault() is { } world)
+        {
+            var items = await Task.Run(() => MapLoader.Load(world, new Progress<string>(m => { if (m.StartsWith("Reading")) Console.WriteLine($"    {m}"); })));
+            viewer.ShowMap(items);
+            var map = items[0];
+            foreach (var extra in items.Skip(1))
+                Console.WriteLine($"    {(extra.IsVisible ? "shown" : "hidden")}: {extra.Name}: {extra.Details}");
+            Console.WriteLine($"{map.Name}: {map.Details}, built in {watch.ElapsedMilliseconds} ms; " +
+                              $"bounds {(map.Max - map.Min) / 100} m; textures {map.Objects.SelectMany(o => o.Model.Sections).Select(x => x.Texture).OfType<ViewerTexture>().Distinct().Count()}");
+            foreach (var o in map.Objects.OrderByDescending(o => o.Instances.Length).Take(5))
+                Console.WriteLine($"    {o.Model.Name} ({o.Model.Kind}) × {o.Instances.Length}");
+            await Capture($"map-{map.Name}");
+            continue;
+        }
+
+        var mesh = exports.FirstOrDefault(ViewerModel.CanView);
+        if (mesh is null)
+        {
+            Console.WriteLine($"No mesh in {package}");
+            continue;
+        }
+        var model = await Task.Run(() => ViewerModel.FromExport(mesh));
+        viewer.AddModel(model);
+        Console.WriteLine($"{model.Name}: {model.Kind}, {model.VertexCount:N0} verts, {model.TriangleCount:N0} tris, " +
+                          $"radius {model.Radius:0.#}, built in {watch.ElapsedMilliseconds} ms");
+        foreach (var section in model.Sections) Console.WriteLine($"    {section.MaterialName}: {section.Details}");
+        foreach (var morph in model.Morphs)
+            Console.WriteLine($"    morph {morph.Name}: {morph.Details} " + string.Join(" ", morph.VertexIndices.Select((v, i) =>
+                $"v{v}=({morph.Deltas[i * 6]:0.##},{morph.Deltas[i * 6 + 1]:0.##},{morph.Deltas[i * 6 + 2]:0.##})")));
+
+        await Task.Delay(300);
+        var capture = viewer.ModelViewport.CaptureAsync();
+        if (await Task.WhenAny(capture, Task.Delay(5000)) != capture)
+        {
+            Console.WriteLine("    capture timed out (no frame rendered)");
+            continue;
+        }
+        var path = Path.Combine(outputDir, $"viewer-{model.Name}.png");
+        await File.WriteAllBytesAsync(path, capture.Result);
+        Console.WriteLine($"    saved {path}");
+    }
+    // The GL surface doesn't show up in a RenderTargetBitmap, but the rest of the window layout does
+    var scale = viewer.RenderScaling;
+    using var frame = new Avalonia.Media.Imaging.RenderTargetBitmap(
+        new PixelSize((int) (viewer.Bounds.Width * scale), (int) (viewer.Bounds.Height * scale)), new Vector(96 * scale, 96 * scale));
+    frame.Render(viewer);
+    frame.Save(Path.Combine(outputDir, "viewer-window.png"));
+    viewer.Close();
+}
+
+async Task ExportTestAsync(int count)
+{
+    var vm = new MainViewModel();
+    await vm.InitializeGameAsync();
+    Console.WriteLine($"Init: {vm.StatusText} | {vm.StatusExtra} | archives {vm.Archives.Count}");
+    await vm.LoadCommand.ExecuteAsync(null);
+    var files = vm.AllFiles().Where(f => f.Extension == "uasset").ToArray();
+    Console.WriteLine($"Packages: {files.Length}");
+    files = files.OrderBy(f => f.Path.StartsWith("Engine/") ? 1 : 0).ToArray(); // the game's own content first
+    var prefixes = files.Where(f => !f.Path.StartsWith("Engine/")).GroupBy(f => f.Name.Split('_')[0] + "_")
+        .OrderByDescending(g => g.Count()).Take(30).Select(g => $"{g.Key}{g.Count()}");
+    Console.WriteLine($"Prefixes: {string.Join(" ", prefixes)}");
+    File.WriteAllLines(Path.Combine(AppSettings.DataDirectory, "packages.txt"), files.Select(f => f.Path));
+
+    var skeletons = files.Where(f => f.NameWithoutExtension.EndsWith("_Skeleton"))
+        .Select(f => f.PathWithoutExtension[..^"_Skeleton".Length]).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    async Task Run(string label, IAsyncRelayCommand<System.Collections.IList?> command, Func<GameFile, bool> pick)
+    {
+        var sample = files.Where(pick).Take(count).Select(f => new AssetItem(f)).ToList();
+        Console.WriteLine($"--- {label}: {string.Join(", ", sample.Select(i => i.File.Path))}");
+        var before = vm.Logs.Count;
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        await command.ExecuteAsync(sample);
+        Console.WriteLine($"    {vm.StatusText} in {watch.Elapsed.TotalSeconds:F1}s");
+        foreach (var log in vm.Logs.Skip(before)) Console.WriteLine($"    [{log.Kind}] {log.Message}");
+    }
+
+    // Name conventions vary per game: SM_ for static meshes, "<mesh>_Skeleton" next to skeletal meshes
+    await Run("static meshes", vm.ExportModelCommand, f => f.Name.StartsWith("SM_"));
+    await Run("skeletal meshes", vm.ExportModelCommand, f => f.Name.StartsWith("SK_") || skeletons.Contains(f.PathWithoutExtension));
+    await Run("animations", vm.ExportAnimationCommand,
+        f => f.Name.StartsWith("A_") || f.Name.StartsWith("AS_") || f.Path.Contains("/Motion/") || f.Path.Contains("/Animations/"));
+}
+
+async Task RunAsync()
+{
+    var vm = new MainViewModel();
+    var window = new MainWindow { DataContext = vm, Width = 1600, Height = 950 };
+    window.Show(); // OnOpened mounts the configured game, like the real app
+
+    await WaitFor(() => vm.Archives.Count > 0 && vm.IsReady, "archives");
+    Console.WriteLine($"Init: {vm.StatusText} | {vm.StatusExtra} | archives {vm.Archives.Count} | title '{vm.Title}'");
+    vm.SelectedArchive = vm.Archives.First(a => a.IsEnabled);
+    Save(window, "1-archives.png");
+
+    await vm.LoadCommand.ExecuteAsync(null);
+    var textures = vm.NavigateToFolder("CUE4ParseFixtures/Content/Fixtures/Textures");
+    Console.WriteLine($"Load: {vm.StatusText} | folders tab {vm.SelectedLeftTab} | {vm.FolderSummary}");
+    Save(window, "2-folders.png");
+    await InputTestAsync(window, vm);
+
+    vm.SelectedLeftTab = 2;
+    vm.SelectedPackage = vm.Packages.First(p => p.Name == "T_Streaming.uasset");
+    await vm.ExtractAsync(vm.SelectedPackage.File);
+    Console.WriteLine($"Extract: {vm.StatusText} | tab '{vm.SelectedTab?.Header}' image {vm.SelectedTab?.HasImage} | {vm.PackagesHeader}");
+    Save(window, "3-packages-texture.png");
+
+    vm.NavigateToFolder("CUE4ParseFixtures/Content/Fixtures/Meshes");
+    vm.SelectedPackage = vm.Packages.First(p => p.Name == "SK_Fixture.uasset");
+    await vm.ExtractAsync(vm.SelectedPackage.File, newTab: true);
+    await vm.ExportPropertiesCommand.ExecuteAsync(null);
+    await vm.ExportModelCommand.ExecuteAsync(null);
+    vm.SelectedPackage = vm.Packages.First(p => p.Name == "SM_Fixture.uasset");
+    await vm.ExportModelCommand.ExecuteAsync(null);
+    Console.WriteLine($"New tab: {vm.Tabs.Count} tabs | logs {vm.Logs.Count} | last export {vm.LastExportPath}");
+    Save(window, "4-json-tab.png");
+
+    var aes = new AesManagerWindow(vm.Settings, vm.Archives);
+    aes.Show();
+    Save(aes, "5-aes.png");
+    aes.Close();
+
+    var selector = new DirectorySelectorWindow(vm.Settings);
+    selector.Show();
+    Save(selector, "6-directory-selector.png");
+    selector.Close();
+
+    var search = new SearchWindow(vm);
+    search.Show();
+    await Task.Delay(400);
+    Save(search, "7-search.png");
+    search.Close();
+
+    window.Close();
+}
+
+// Real pointer/keyboard input on the folder tree: arrow button, item click, Up/Down/Left/Right
+async Task InputTestAsync(Window window, MainViewModel vm)
+{
+    vm.Folders.CollapseAll();
+    vm.SelectedLeftTab = 1;
+    Dispatcher.UIThread.RunJobs();
+    await Task.Delay(100);
+
+    var list = window.GetVisualDescendants().OfType<ListBox>().First(l => l.Name == "FolderList");
+    ListBoxItem Item(int i) => (ListBoxItem) list.ContainerFromIndex(i)!;
+    Point Center(Visual v, double dx = 0) => v.TranslatePoint(new Point(v.Bounds.Width / 2 + dx, v.Bounds.Height / 2), window)!.Value;
+    void Click(Point p) { window.MouseDown(p, MouseButton.Left); window.MouseUp(p, MouseButton.Left); Dispatcher.UIThread.RunJobs(); }
+    void Key(Key k) { window.KeyPress(k, RawInputModifiers.None); window.KeyRelease(k, RawInputModifiers.None); Dispatcher.UIThread.RunJobs(); }
+
+    var root = vm.Folders.VisibleFolders[0];
+    var arrow = Item(0).GetVisualDescendants().OfType<Button>().First();
+    Click(Center(arrow));
+    Console.WriteLine($"[input] arrow click on '{root.Name}': expanded={root.IsExpanded}, visible={vm.Folders.VisibleFolders.Count}");
+
+    var nameText = Item(0).GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == root.Name);
+    Click(Center(nameText));
+    Console.WriteLine($"[input] click name: selected='{vm.Folders.SelectedFolder?.Name}', focus={TopLevel.GetTopLevel(window)?.FocusManager?.GetFocusedElement()?.GetType().Name}");
+
+    Key(Avalonia.Input.Key.Down);
+    Console.WriteLine($"[input] Down: selected='{vm.Folders.SelectedFolder?.Name}'");
+    Key(Avalonia.Input.Key.Up);
+    Console.WriteLine($"[input] Up: selected='{vm.Folders.SelectedFolder?.Name}'");
+    Key(Avalonia.Input.Key.Left);
+    Console.WriteLine($"[input] Left: '{root.Name}' expanded={root.IsExpanded}");
+    Key(Avalonia.Input.Key.Right);
+    Console.WriteLine($"[input] Right: '{root.Name}' expanded={root.IsExpanded}");
+    Key(Avalonia.Input.Key.Right);
+    Console.WriteLine($"[input] Right again: selected='{vm.Folders.SelectedFolder?.Name}'");
+    Key(Avalonia.Input.Key.Left);
+    Console.WriteLine($"[input] Left on child: selected='{vm.Folders.SelectedFolder?.Name}'");
+    Key(Avalonia.Input.Key.Left);
+    Console.WriteLine($"[input] Left on root: '{root.Name}' expanded={root.IsExpanded}");
+    Click(Center(arrow));
+    Console.WriteLine($"[input] arrow click again: expanded={root.IsExpanded}");
+
+    vm.NavigateToFolder("CUE4ParseFixtures/Content/Fixtures/Textures");
+}
+
+async Task WaitFor(Func<bool> condition, string what)
+{
+    for (var i = 0; i < 400 && !condition(); i++) await Task.Delay(50);
+    if (!condition()) Console.WriteLine($"Timed out waiting for {what}");
+}
+
+void Save(TopLevel top, string name)
+{
+    Dispatcher.UIThread.RunJobs();
+    AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+    var frame = top.CaptureRenderedFrame();
+    var path = Path.Combine(outDir, name);
+    frame?.Save(path);
+    Console.WriteLine(frame is null ? $"No frame for {name}" : $"Saved {name}");
+}
+
+internal sealed class SnapshotApp
+{
+    public static AppBuilder BuildAvaloniaApp() => AppBuilder.Configure<App>()
+        .UseSkia()
+        .With(new FontManagerOptions { DefaultFamilyName = "Helvetica Neue" })
+        .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false });
+}

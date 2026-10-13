@@ -1,0 +1,23 @@
+# Third-party checkouts and builds: recreated by scripts/setup-upstream.sh
+# (our CUE4Parse changes live in patches/CUE4Parse.patch)
+/upstream/
+/oodle-src/
+/vendor/
+
+# .NET build output
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.idea/
+
+# Packaged app
+/app/dist/
+
+# Test harness output
+/app/FModelMac.Snapshot/snapshots/
+/app/FModelMac.Snapshot/out/
+
+# macOS
+.DS_Store

@@ -1,0 +1,64 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:c="using:FModelMac.Controls"
+        xmlns:ae="using:AvaloniaEdit"
+        x:Class="FModelMac.Views.EndpointEditorWindow"
+        Title="Endpoint Configuration"
+        Width="1100" Height="680" MinWidth="760" MinHeight="420"
+        WindowStartupLocation="CenterOwner">
+    <DockPanel>
+        <Border DockPanel.Dock="Bottom" Background="{StaticResource Layer1BackgroundBrush}">
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto" Margin="12,10,6,10">
+                <Button Content="Expression Syntax" Click="OnSyntaxClick" Margin="0,0,8,0" />
+                <Button Grid.Column="1" Content="Online Evaluator" Click="OnEvaluatorClick" />
+                <TextBlock x:Name="ValidityText" Grid.Column="2" VerticalAlignment="Center" Margin="16,0" TextWrapping="Wrap" />
+                <Button x:Name="DisableButton" Grid.Column="3" Content="Disable Endpoint" Click="OnDisableClick" Margin="0,0,12,0"
+                        ToolTip.Tip="Stop using this endpoint" />
+                <Button x:Name="OkButton" Grid.Column="4" MinWidth="78" Content="OK" IsDefault="True" Click="OnOkClick" Margin="0,0,12,0" />
+                <Button Grid.Column="5" MinWidth="78" Content="Cancel" IsCancel="True" Click="OnCancelClick" Margin="0,0,6,0" />
+            </Grid>
+        </Border>
+
+        <Grid ColumnDefinitions="*,10,*" Margin="10">
+            <!-- Left: the endpoint and its raw response -->
+            <Border Background="{StaticResource Layer2BackgroundBrush}" Padding="10">
+                <DockPanel>
+                    <c:SectionSeparator DockPanel.Dock="Top" Text="ENDPOINT" Margin="0,0,0,8" />
+                    <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,8,*" Margin="0,0,0,8">
+                        <TextBlock Text="Preset" VerticalAlignment="Center" />
+                        <ComboBox x:Name="PresetBox" Grid.Column="2" HorizontalAlignment="Stretch" SelectionChanged="OnPresetChanged" />
+                    </Grid>
+                    <Grid DockPanel.Dock="Top" ColumnDefinitions="*,5,Auto" Margin="0,0,0,8">
+                        <TextBox x:Name="UrlBox" Watermark="https://… (returns JSON)" TextChanged="OnConfigChanged" />
+                        <Button Grid.Column="2" Content="Send" Click="OnSendClick" ToolTip.Tip="Show the endpoint's response" />
+                    </Grid>
+                    <ae:TextEditor x:Name="EndpointResponse" IsReadOnly="True" ShowLineNumbers="True"
+                                   FontFamily="Menlo, Consolas, monospace" FontSize="12"
+                                   Foreground="{StaticResource EditorForegroundBrush}" LineNumbersForeground="#6E7381"
+                                   Background="{StaticResource Layer3BackgroundBrush}"
+                                   HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" />
+                </DockPanel>
+            </Border>
+
+            <!-- Right: instructions, the JSONPath expression and what it extracts -->
+            <Border Grid.Column="2" Background="{StaticResource Layer2BackgroundBrush}" Padding="10">
+                <DockPanel>
+                    <c:SectionSeparator DockPanel.Dock="Top" Text="INSTRUCTION" Margin="0,0,0,8" />
+                    <TextBlock x:Name="InstructionBox" DockPanel.Dock="Top" TextWrapping="Wrap" FontSize="12" Margin="0,0,0,8" />
+                    <c:SectionSeparator DockPanel.Dock="Top" Text="EXPRESSION" Margin="0,0,0,8" />
+                    <Grid DockPanel.Dock="Top" ColumnDefinitions="*,5,Auto" Margin="0,0,0,8">
+                        <TextBox x:Name="PathBox" FontFamily="Menlo, Consolas, monospace" Watermark="JSONPath, e.g. $.['mainKey','dynamicKeys']"
+                                 TextChanged="OnConfigChanged" />
+                        <Button x:Name="TestButton" Grid.Column="2" Content="Test" Click="OnTestClick"
+                                ToolTip.Tip="Run the expression on the endpoint's response" />
+                    </Grid>
+                    <ae:TextEditor x:Name="TargetResponse" IsReadOnly="True" ShowLineNumbers="True"
+                                   FontFamily="Menlo, Consolas, monospace" FontSize="12"
+                                   Foreground="{StaticResource EditorForegroundBrush}" LineNumbersForeground="#6E7381"
+                                   Background="{StaticResource Layer3BackgroundBrush}"
+                                   HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" />
+                </DockPanel>
+            </Border>
+        </Grid>
+    </DockPanel>
+</Window>

@@ -1,0 +1,52 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:c="using:FModelMac.Controls"
+        xmlns:v="using:FModelMac.Views"
+        x:Class="FModelMac.Views.AesManagerWindow"
+        Title="AES Manager"
+        Width="640" SizeToContent="Height" MaxHeight="760" CanResize="False"
+        WindowStartupLocation="CenterOwner">
+    <DockPanel>
+        <StackPanel DockPanel.Dock="Top" Margin="10,5,10,10">
+            <TextBlock Text="Instruction" HorizontalAlignment="Center" FontSize="20" FontWeight="SemiBold" />
+            <TextBlock TextAlignment="Center" TextWrapping="Wrap" HorizontalAlignment="Center"
+                       Text="In order to decipher archives' information, an AES key, in most cases, is needed. Here you can set the key for your static and dynamic archives. If you don't know what key to use for your set game, simply Google it. Keys must start with &quot;0x&quot; and contains 64 more characters." />
+        </StackPanel>
+
+        <Border DockPanel.Dock="Bottom" Background="{StaticResource Layer1BackgroundBrush}">
+            <Grid ColumnDefinitions="*,Auto,Auto" Margin="30,12,6,12">
+                <TextBlock x:Name="ErrorText" Foreground="{StaticResource AdonisErrorBrush}" VerticalAlignment="Center" IsVisible="False" />
+                <Button Grid.Column="1" MinWidth="78" Margin="0,0,12,0" Content="OK" IsDefault="True" Click="OnOkClick" />
+                <Button Grid.Column="2" MinWidth="78" Margin="0,0,12,0" Content="Cancel" IsCancel="True" Click="OnCancelClick" />
+            </Grid>
+        </Border>
+
+        <Border Background="{StaticResource Layer2BackgroundBrush}" Margin="10,10,10,18" Padding="10">
+            <DockPanel>
+                <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,10,*">
+                    <TextBlock Text="Main Static Key" VerticalAlignment="Center" />
+                    <TextBox x:Name="MainKey" Grid.Column="2" FontFamily="Menlo, Consolas, monospace"
+                             Watermark="0x0000000000000000000000000000000000000000000000000000000000000000" />
+                </Grid>
+                <c:SectionSeparator DockPanel.Dock="Top" Text="DYNAMIC KEYS" />
+                <TextBlock DockPanel.Dock="Top" x:Name="NoDynamic" Classes="dim" HorizontalAlignment="Center"
+                           Text="No archive needs a dynamic key" />
+                <ScrollViewer MaxHeight="360">
+                    <ItemsControl x:Name="DynamicList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="v:DynamicKeyRow">
+                                <Grid ColumnDefinitions="260,10,*" Margin="0,0,0,5">
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Archives}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding Guid}" Classes="dim" FontSize="10" FontFamily="Menlo, Consolas, monospace" />
+                                    </StackPanel>
+                                    <TextBox Grid.Column="2" Text="{Binding Key}" FontFamily="Menlo, Consolas, monospace" Watermark="0x…" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </DockPanel>
+        </Border>
+    </DockPanel>
+</Window>
