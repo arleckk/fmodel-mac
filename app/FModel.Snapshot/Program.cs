@@ -654,9 +654,11 @@ if (args is ["--mcp-test", var mcpOut, var mcpPaks, var mcpGame, var mcpUsmap, .
         Check("server", client.ServerInfo.Name == "fmodel" && client.ServerInstructions?.Contains("game_info") == true,
             $"{client.ServerInfo.Name} {client.ServerInfo.Version}");
         var tools = await client.ListToolsAsync();
-        Check("tools", tools.Count == 11, string.Join(", ", tools.Select(t => t.Name)));
-        Check("read-only hints", tools.Where(t => t.Name != "export_assets").All(t => t.ProtocolTool.Annotations?.ReadOnlyHint == true) &&
-                                 tools.Single(t => t.Name == "export_assets").ProtocolTool.Annotations?.ReadOnlyHint == false);
+        Check("tools", tools.Count == 13, string.Join(", ", tools.Select(t => t.Name)));
+        // Only the tools that write files say they aren't read-only
+        string[] writers = ["export_assets", "create_backup"];
+        Check("read-only hints", tools.All(t => t.ProtocolTool.Annotations?.ReadOnlyHint == !writers.Contains(t.Name)) &&
+                                 writers.All(w => tools.Any(t => t.Name == w)));
 
         var (profiles, _) = await Call("list_profiles", []);
         Check("list_profiles", profiles.Contains($"Fixtures | {mcpGame}") && profiles.Contains("active in the app"), profiles);
