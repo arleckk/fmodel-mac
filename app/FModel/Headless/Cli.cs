@@ -27,7 +27,10 @@ public static class Cli
           blueprint <path>             Print the decompiled Blueprint classes of a package
           refs <path>                  List the packages that reference a package
           export <path|folder>...      Export with the app's settings into its output folder
-                                       --kind properties|raw|textures|models|animations|worlds|audio|code
+                                       --kind properties|raw|textures|models|animations|worlds|audio|code,
+                                       several separated by commas, or all (every kind but raw)
+          backup                       Save the game's file list as a .fbkp in Output/Backups (or -o)
+          diff <backup|latest>         What's new or modified since a backup ("latest": the newest one)
           mcp                          Run the MCP server over stdio, for AI assistants
           version                      Print the version
 
@@ -40,7 +43,12 @@ public static class Cli
               --refresh-aes            Ask the profile's AES endpoint for keys first
 
         Options:
-          -o, --output <path>          export: the output folder; cat, metadata, blueprint: a file to write
+          -o, --output <path>          export: the output folder; cat, metadata, blueprint: a file to write;
+                                       backup: a folder or a .fbkp file
+              --since <backup|latest>  export: only files new or modified since the backup (no path = the
+                                       whole game)
+              --mesh-format <format>   export: gltf, uemodel, usd or actorx, for this run only
+              --compression <format>   export: UEFormat compression (none, zstd, gzip), for this run only
               --json                   profiles, info, ls, search, refs, export: JSON output
               --limit <n>              search: at most n results (default 200, 0 for all)
               --folder <folder>        search: only below this folder
@@ -55,7 +63,8 @@ public static class Cli
 
     private static readonly HashSet<string> Commands = new(StringComparer.OrdinalIgnoreCase)
     {
-        "profiles", "info", "ls", "search", "cat", "metadata", "blueprint", "refs", "export", "mcp", "version", "help",
+        "profiles", "info", "ls", "search", "cat", "metadata", "blueprint", "refs", "export", "backup", "diff", "mcp",
+        "version", "help",
         "--help", "-h", "--version"
     };
 
@@ -164,6 +173,10 @@ public static class Cli
                 return Write(game.Archive.DecompileBlueprint(file) ?? throw new HeadlessException($"{file.Name} has no Blueprint class"), o);
             case "refs":
                 return References(game, o, ct);
+            case "backup":
+                return Backup(game, o);
+            case "diff":
+                return Diff(game, o);
             default:
                 return await Export(game, o, log, ct);
         }
@@ -258,28 +271,82 @@ public static class Cli
         return 0;
     }
 
+    private static int Backup(HeadlessGame game, Options o)
+    {
+        var (path, count) = HeadlessChanges.CreateBackup(game, o.Output);
+        if (o.Json) Console.WriteLine(JsonConvert.SerializeObject(new { Path = path, Files = count }, JsonOutput));
+        else Console.WriteLine(path);
+        Console.Error.WriteLine($"Backup of {count:N0} files saved to {path}");
+        return 0;
+    }
+
+    private static int Diff(HeadlessGame game, Options o)
+    {
+        var changes = HeadlessChanges.Compare(game, HeadlessChanges.ResolveBackup(game.Settings, o.Single("a backup (.fbkp or latest)")));
+        if (o.Json) Console.WriteLine(JsonConvert.SerializeObject(changes, JsonOutput));
+        else
+        {
+            foreach (var path in changes.New) Console.WriteLine($"+ {path}");
+            foreach (var path in changes.Modified) Console.WriteLine($"~ {path}");
+        }
+        Console.Error.WriteLine($"Since {Path.GetFileName(changes.Backup)} ({changes.BackupFiles:N0} files): " +
+                                $"{changes.New.Count:N0} new, {changes.Modified.Count:N0} modified, {changes.Removed:N0} removed");
+        return 0;
+    }
+
     private static async Task<int> Export(HeadlessGame game, Options o, Action<string>? log, CancellationToken ct)
     {
-        if (o.Kind is null) throw new HeadlessException($"export needs --kind ({HeadlessExport.KindList})");
-        var kind = HeadlessExport.ParseKind(o.Kind);
-        if (o.Positional.Count == 0) throw new HeadlessException("export needs a path or a folder");
+        if (o.Kind is null) throw new HeadlessException($"export needs --kind ({HeadlessExport.KindList}, or all)");
+        var kinds = HeadlessChanges.ParseKinds(o.Kind);
+        if (o.Positional.Count == 0 && o.Since is null) throw new HeadlessException("export needs a path or a folder (or --since for the whole game)");
         if (o.Output is not null) game.Settings.OutputDir = Path.GetFullPath(o.Output);
+        HeadlessChanges.Override(game.Settings, o.MeshFormat, o.Compression);
 
         var files = new List<GameFile>();
+        if (o.Positional.Count == 0) files.AddRange(game.FilesUnder(""));
         foreach (var path in o.Positional)
         {
             if (game.FindFolder(path) is { } folder) files.AddRange(game.FilesUnder(folder));
             else files.Add(game.Resolve(path));
         }
-        var report = await HeadlessExport.RunAsync(game, files.DistinctBy(f => f.Path).ToArray(), kind, log, ct);
-        if (o.Json) Console.WriteLine(JsonConvert.SerializeObject(report, JsonOutput));
-        else foreach (var path in report.Files) Console.WriteLine(path);
-        foreach (var error in report.Errors.Take(20)) Console.Error.WriteLine($"error: {error}");
-        if (report.Errors.Count > 20) Console.Error.WriteLine($"… {report.Errors.Count - 20} more errors in {Program.LogDirectory}");
-        Console.Error.WriteLine($"Exported {report.Files.Count} file(s) to {report.Directory}" +
-                                (report.Empty > 0 ? $"; {report.Empty} had no {o.Kind}" : "") +
-                                (report.Errors.Count > 0 ? $"; {report.Errors.Count} error(s)" : ""));
-        return report.Files.Count == 0 && report.Errors.Count > 0 ? 1 : 0;
+        IReadOnlyList<GameFile> selected = files.DistinctBy(f => f.Path).ToArray();
+        if (o.Since is not null)
+        {
+            var changes = HeadlessChanges.Compare(game, HeadlessChanges.ResolveBackup(game.Settings, o.Since));
+            selected = HeadlessChanges.OnlyChanged(selected, changes);
+            Console.Error.WriteLine($"Since {Path.GetFileName(changes.Backup)}: {changes.New.Count:N0} new and " +
+                                    $"{changes.Modified.Count:N0} modified in the game, {selected.Count:N0} of them here");
+        }
+
+        var written = new List<string>();
+        var errors = new List<string>();
+        var directory = game.Settings.ExportsDir;
+        var runs = new List<object>();
+        foreach (var kind in kinds)
+        {
+            ct.ThrowIfCancellationRequested();
+            var report = selected.Count == 0
+                ? new ExportReport(directory, [], [], 0)
+                : await HeadlessExport.RunAsync(game, selected, kind, log, ct);
+            directory = report.Directory;
+            written.AddRange(report.Files);
+            errors.AddRange(report.Errors);
+            runs.Add(new { Kind = kind.ToString().ToLowerInvariant(), Files = report.Files.Count, Errors = report.Errors.Count, report.Empty });
+            if (kinds.Count > 1)
+                Console.Error.WriteLine($"{kind.ToString().ToLowerInvariant()}: {report.Files.Count} file(s)" +
+                                        (report.Errors.Count > 0 ? $", {report.Errors.Count} error(s)" : ""));
+        }
+
+        if (o.Json)
+        {
+            Console.WriteLine(JsonConvert.SerializeObject(new { Directory = directory, Selected = selected.Count, Kinds = runs, Files = written, Errors = errors },
+                JsonOutput));
+        }
+        else foreach (var path in written) Console.WriteLine(path);
+        foreach (var error in errors.Take(20)) Console.Error.WriteLine($"error: {error}");
+        if (errors.Count > 20) Console.Error.WriteLine($"… {errors.Count - 20} more errors in {Program.LogDirectory}");
+        Console.Error.WriteLine($"Exported {written.Count} file(s) to {directory}" + (errors.Count > 0 ? $"; {errors.Count} error(s)" : ""));
+        return written.Count == 0 && errors.Count > 0 ? 1 : 0;
     }
 
     private static GameFile Package(HeadlessGame game, string path)
@@ -309,7 +376,7 @@ public static class Cli
     {
         public string Command = "";
         public readonly List<string> Positional = [];
-        public string? Profile, Directory, Game, Aes, Mappings, Output, Kind, Export, Folder;
+        public string? Profile, Directory, Game, Aes, Mappings, Output, Kind, Export, Folder, Since, MeshFormat, Compression;
         public bool Json, Recursive, Regex, Verbose, RefreshAes;
         public int Limit = 200;
 
@@ -340,6 +407,9 @@ public static class Cli
                     case "--kind": o.Kind = Value(); break;
                     case "--export": o.Export = Value(); break;
                     case "--folder": o.Folder = Value(); break;
+                    case "--since": o.Since = Value(); break;
+                    case "--mesh-format": o.MeshFormat = Value(); break;
+                    case "--compression": o.Compression = Value(); break;
                     case "--limit":
                         o.Limit = int.TryParse(Value(), out var limit) && limit >= 0 ? limit : throw new HeadlessException("--limit needs a number");
                         break;

@@ -199,6 +199,117 @@ index abfca03c2213c9a64738cc286c39c9127865398f..0f625446e87cba9bdb8020a4e869804e
  
  if (EXISTS "${PROJECT_SOURCE_DIR}/ACL/external/acl/includes")
      set(WITH_ACL 1)
+diff --git a/CUE4Parse/FileProvider/Vfs/FileProviderDictionary.cs b/CUE4Parse/FileProvider/Vfs/FileProviderDictionary.cs
+index 311c8875060abdadca1810192c403c95cacc0718..856a999fabcdf298cb539b60b34928c571be1f3b 100644
+--- a/CUE4Parse/FileProvider/Vfs/FileProviderDictionary.cs
++++ b/CUE4Parse/FileProvider/Vfs/FileProviderDictionary.cs
+@@ -11,6 +11,8 @@ namespace CUE4Parse.FileProvider.Vfs
+     public class FileProviderDictionary : IReadOnlyDictionary<string, GameFile>
+     {
+         private readonly ConcurrentBag<KeyValuePair<long, IReadOnlyDictionary<string, GameFile>>> _indicesBag = [];
++        private readonly ConcurrentDictionary<IReadOnlyDictionary<string, GameFile>, string> _sources = new(ReferenceEqualityComparer.Instance);
++        private KeyValuePair<long, IReadOnlyDictionary<string, GameFile>>[]? _ordered;
+ 
+         private ConcurrentDictionary<FPackageId, GameFile>? _byId;
+         private ConcurrentDictionary<FPackageId, GameFile>? _optionalById;
+@@ -150,7 +152,9 @@ public void AddFiles(IReadOnlyDictionary<string, GameFile> newFiles, long readOr
+                     packageIndex[packageId] = file;
+             }
+ 
++            _sources[newFiles] = SourceName(newFiles);
+             _indicesBag.Add(new KeyValuePair<long, IReadOnlyDictionary<string, GameFile>>(readOrder, newFiles));
++            Volatile.Write(ref _ordered, null);
+             Interlocked.Add(ref _count, CountVisible(newFiles));
+ 
+             if (optionalSegmentPackageFiles is { Count: > 0 })
+@@ -161,6 +165,33 @@ public void AddFiles(IReadOnlyDictionary<string, GameFile> newFiles, long readOr
+             }
+         }
+ 
++        private static string SourceName(IReadOnlyDictionary<string, GameFile> files)
++        {
++            foreach (var file in files.Values)
++                return file is VfsEntry { Vfs: { } vfs } ? vfs.Name : string.Empty;
++            return string.Empty;
++        }
++
++        /// <summary>
++        /// The indices from the highest priority down. Archives mount in parallel, so the bag's order is random: with
++        /// ties (every "pakchunkN-Windows.pak" of a game shares one read order) the same path resolved to a different
++        /// archive on every mount. Ties go the way Unreal Engine breaks them: it mounts the pak files sorted by name in
++        /// descending order and keeps that order among equal priorities, so the greatest name wins.
++        /// </summary>
++        private KeyValuePair<long, IReadOnlyDictionary<string, GameFile>>[] Ordered()
++        {
++            var ordered = Volatile.Read(ref _ordered);
++            if (ordered is not null)
++                return ordered;
++
++            ordered = _indicesBag
++                .OrderByDescending(kvp => kvp.Key)
++                .ThenByDescending(kvp => _sources.TryGetValue(kvp.Value, out var name) ? name : string.Empty, StringComparer.OrdinalIgnoreCase)
++                .ToArray();
++            Volatile.Write(ref _ordered, ordered);
++            return ordered;
++        }
++
+         /// <summary>
+         /// Number of files that are actually listed. Files cooked as part of another file (see
+         /// <see cref="GameFile.IsHidden"/>) stay resolvable by path but are not enumerated.
+@@ -174,6 +205,8 @@ private static int CountVisible(IReadOnlyDictionary<string, GameFile> files)
+         public void Clear()
+         {
+             _indicesBag.Clear();
++            _sources.Clear();
++            Volatile.Write(ref _ordered, null);
+             Volatile.Read(ref _byId)?.Clear();
+             Volatile.Read(ref _optionalById)?.Clear();
+             Interlocked.Exchange(ref _count, 0);
+@@ -188,7 +221,7 @@ public bool ContainsKey(string key)
+         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+         public bool TryGetValue(string key, [MaybeNullWhen(false)] out GameFile value)
+         {
+-            foreach (var files in _indicesBag.OrderByDescending(kvp => kvp.Key))
++            foreach (var files in Ordered())
+             {
+                 if (files.Value.TryGetValue(key, out value))
+                     return true;
+@@ -202,7 +235,7 @@ public bool TryGetValue(string key, [MaybeNullWhen(false)] out GameFile value)
+         public bool TryGetValues(string key, out List<GameFile> values)
+         {
+             values = [];
+-            foreach (var files in _indicesBag.OrderByDescending(kvp => kvp.Key))
++            foreach (var files in Ordered())
+             {
+                 if (files.Value.TryGetValue(key, out var value))
+                 {
+@@ -217,7 +250,7 @@ public bool TryGetValues(string key, out List<GameFile> values)
+         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+         public IEnumerator<KeyValuePair<string, GameFile>> GetEnumerator()
+         {
+-            return (from index in _indicesBag.OrderByDescending(kvp => kvp.Key) from entry in index.Value where !entry.Value.IsHidden select entry).GetEnumerator();
++            return (from index in Ordered() from entry in index.Value where !entry.Value.IsHidden select entry).GetEnumerator();
+         }
+ 
+         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+@@ -236,7 +269,7 @@ internal KeyEnumerable(FileProviderDictionary orig)
+ 
+             public IEnumerator<string> GetEnumerator()
+             {
+-                return (from index in _orig._indicesBag.OrderByDescending(kvp => kvp.Key) from entry in index.Value where !entry.Value.IsHidden select entry.Key).GetEnumerator();
++                return (from index in _orig.Ordered() from entry in index.Value where !entry.Value.IsHidden select entry.Key).GetEnumerator();
+             }
+ 
+             IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+@@ -253,7 +286,7 @@ internal ValueEnumerable(FileProviderDictionary orig)
+ 
+             public IEnumerator<GameFile> GetEnumerator()
+             {
+-                return (from index in _orig._indicesBag.OrderByDescending(kvp => kvp.Key) from value in index.Value.Values where !value.IsHidden select value).GetEnumerator();
++                return (from index in _orig.Ordered() from value in index.Value.Values where !value.IsHidden select value).GetEnumerator();
+             }
+ 
+             IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 diff --git a/CUE4Parse/UE4/Objects/Engine/Animation/FBlendParameter.cs b/CUE4Parse/UE4/Objects/Engine/Animation/FBlendParameter.cs
 index eec9055d538b929ce7ba4567e05c43daec97fd80..50b3aee2008e5a5bff7b2847db98f18bafa54079 100644
 --- a/CUE4Parse/UE4/Objects/Engine/Animation/FBlendParameter.cs
