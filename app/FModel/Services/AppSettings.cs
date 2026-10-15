@@ -125,6 +125,8 @@ public sealed class AppSettings
     public bool PreviewWorlds { get; set; } = true;
     /// <summary>FModel's "Preview Materials": a material opens on a cube; with a section waiting, it swaps that section's.</summary>
     public bool PreviewMaterials { get; set; } = true;
+    /// <summary>Navigation meshes: UE's cooked navmesh data and Detour navmesh set files (.bin "MSET").</summary>
+    public bool PreviewNavMeshes { get; set; } = true;
 
     /// <summary>FModel's "Preview Max Texture Size": largest side of the textures the 3D viewer decodes.</summary>
     public int PreviewMaxTextureSize

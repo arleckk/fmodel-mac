@@ -143,14 +143,21 @@ public partial class ModelViewerWindow : Window
     public IViewerMotion? Motion => _motion;
     public float AnimationTime => _pose is null ? 0 : _phase * _pose.Duration;
 
-    /// <summary>Adds a mesh next to the others (a map in the scene is replaced) and selects it.</summary>
+    /// <summary>
+    /// Adds a mesh next to the others (a map in the scene is replaced) and selects it. A navigation mesh stays at its
+    /// place in the world instead, over the map when one is open.
+    /// </summary>
     public SceneItem AddModel(ViewerModel model)
     {
-        if (Scene.Items.Any(i => i.Kind == SceneItem.MapKind)) ClearScene();
+        var inPlace = model.Kind == ViewerModel.NavMeshKind;
+        if (!inPlace && Scene.Items.Any(i => i.Kind == SceneItem.MapKind)) ClearScene();
         Watch(model);
-        var item = Scene.AddBeside(SceneItem.ForModel(model));
+        var item = SceneItem.ForModel(model);
+        if (inPlace) Scene.Items.Add(item);
+        else Scene.AddBeside(item);
         SceneList.SelectedItem = item;
-        Viewport.FrameAll();
+        if (inPlace) Viewport.FrameModel(); // the selected navmesh, not the whole map around it
+        else Viewport.FrameAll();
         return item;
     }
 

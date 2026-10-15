@@ -764,6 +764,8 @@ public sealed partial class MainViewModel : ObservableObject, IAnimationSource
             if (Settings.PreviewAnimations && result.Animation is { } animation) await PreviewAnimationAsync(animation);
             if (Settings.PreviewWorlds && result.World is { } world) await PreviewMapAsync(world);
             if (Settings.PreviewMaterials && mesh is null && result.Material is { } material) await PreviewMaterialAsync(material);
+            if (Settings.PreviewNavMeshes)
+                foreach (var navMesh in result.NavMeshes ?? []) await PreviewNavMeshAsync(navMesh);
         }
         catch (OperationCanceledException)
         {
@@ -886,6 +888,26 @@ public sealed partial class MainViewModel : ObservableObject, IAnimationSource
         }
     }
 
+    /// <summary>A navigation mesh in the 3D viewer, its polygons colored by area.</summary>
+    public async Task PreviewNavMeshAsync(NavMesh navMesh)
+    {
+        SetStatus(StatusKind.Loading, $"Loading {navMesh.Name} in the 3D viewer");
+        try
+        {
+            var model = await Task.Run(() => ViewerModel.FromNavMesh(navMesh));
+            ModelReady?.Invoke(model);
+            Log(LogKind.Information, $"Loaded navigation mesh '{navMesh.Name}' in the 3D viewer ({navMesh.Tiles.Length:N0} tiles, " +
+                                     $"{navMesh.PolyCount:N0} polygons, {model.TriangleCount:N0} triangles)");
+            SetStatus(StatusKind.Completed, "Completed");
+        }
+        catch (Exception e)
+        {
+            Serilog.Log.Error(e, "Could not load the navigation mesh {NavMesh} in the 3D viewer", navMesh.Name);
+            Log(LogKind.Error, $"3D viewer: {e.Message}");
+            SetStatus(StatusKind.Failed, "Failed");
+        }
+    }
+
     /// <summary>Settings › Preview's texture size and the game's texture platform, for what the 3D viewer loads.</summary>
     private ViewerLoadContext ViewerContext() => new(Settings.PreviewMaxTextureSize, Settings.CurrentVersioning.PlatformValue);
 
@@ -926,10 +948,12 @@ public sealed partial class MainViewModel : ObservableObject, IAnimationSource
         try
         {
             var context = ViewerContext();
-            var map = await Task.Run(() => MapLoader.Load(world, progress, context: context));
+            var map = await Task.Run(() => MapLoader.Load(world, progress, context: context, includeNavMeshes: Settings.PreviewNavMeshes));
             MapReady?.Invoke(map);
-            Log(LogKind.Information, $"Loaded map '{map[0].Name}' in the 3D viewer in {watch.Elapsed.TotalSeconds:0.0}s: {map[0].Details[6..]}" +
-                                     (map.Length > 1 ? $" (sky and backdrops hidden: {map[1].Details})" : ""));
+            var hidden = map.Where(i => !i.IsVisible).Select(i => i.Name).ToArray();
+            var details = map[0].Details[(map[0].Details.IndexOf(" · ", StringComparison.Ordinal) + 3)..];
+            Log(LogKind.Information, $"Loaded map '{world.Name}' in the 3D viewer in {watch.Elapsed.TotalSeconds:0.0}s: {details}" +
+                                     (hidden.Length > 0 ? $" (hidden: {string.Join(", ", hidden)})" : ""));
             SetStatus(StatusKind.Completed, "Completed");
         }
         catch (Exception e)

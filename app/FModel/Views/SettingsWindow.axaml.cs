@@ -53,6 +53,7 @@ public partial class SettingsWindow : Window
         PreviewAnimationsBox.IsChecked = settings.PreviewAnimations;
         PreviewWorldsBox.IsChecked = settings.PreviewWorlds;
         PreviewMaterialsBox.IsChecked = settings.PreviewMaterials;
+        PreviewNavMeshesBox.IsChecked = settings.PreviewNavMeshes;
         PreviewTextureSizeSlider.Value = settings.PreviewMaxTextureSize;
         SkeletonAsMeshBox.IsChecked = settings.SaveSkeletonAsMesh;
         AesReloadBox.ItemsSource = AesReloads.Select(r => r.GetDescription()).ToArray();
@@ -291,6 +292,7 @@ public partial class SettingsWindow : Window
         _settings.PreviewAnimations = PreviewAnimationsBox.IsChecked == true;
         _settings.PreviewWorlds = PreviewWorldsBox.IsChecked == true;
         _settings.PreviewMaterials = PreviewMaterialsBox.IsChecked == true;
+        _settings.PreviewNavMeshes = PreviewNavMeshesBox.IsChecked == true;
         _settings.PreviewMaxTextureSize = (int) PreviewTextureSizeSlider.Value;
         _settings.SaveSkeletonAsMesh = SkeletonAsMeshBox.IsChecked == true;
         _settings.AesReload = AesReloads[Math.Max(0, AesReloadBox.SelectedIndex)];

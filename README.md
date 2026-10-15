@@ -24,7 +24,8 @@ layout and features as closely as macOS allows.
 - **Previews:** properties as JSON, textures, decompiled Blueprints and Lua, localized texts, an
   audio player (Wwise, Bink, ADX/HCA, Opus… through vgmstream) and an image merger.
 - **3D viewer** (OpenGL): static and skeletal meshes with PBR materials and normal maps, maps and
-  landscapes with their layers, an orbit and a fly camera, animations, blend spaces and morph
+  landscapes with their layers, navigation meshes (UE's cooked navmesh data and Detour navmesh set
+  `.bin` files, by area, over the map when one is open), an orbit and a fly camera, animations, blend spaces and morph
   targets, the animations made for a mesh's skeleton with their notifies (sounds played in sync, an
   approximate preview of Niagara and Cascade effects), screenshots and **video export** (MP4/MOV with
   the notify sounds).

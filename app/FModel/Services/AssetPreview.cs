@@ -27,10 +27,11 @@ public sealed record PreviewImage(string Name, byte[] Png, bool NearestNeighbor 
 /// <param name="Sounds">Sounds of the package or file, for the audio player.</param>
 /// <param name="Skeleton">The skeleton of the package, shown as an empty mesh with "Handle Skeletons as Empty Meshes".</param>
 /// <param name="Material">The material (or material instance) of the package, previewed on a cube.</param>
+/// <param name="NavMeshes">Navigation meshes of the package (outside a map) or of the file (a Detour navmesh set).</param>
 public sealed record PreviewResult(string Text, string? Highlight, IReadOnlyList<PreviewImage>? Images,
     UObject? Mesh = null, UAnimationAsset? Animation = null, UWorld? World = null,
     IReadOnlyList<ExtractedSound>? Sounds = null, IReadOnlyList<string>? SoundWarnings = null, USkeleton? Skeleton = null,
-    string? Warning = null, UMaterialInterface? Material = null);
+    string? Warning = null, UMaterialInterface? Material = null, IReadOnlyList<NavMesh>? NavMeshes = null);
 
 public static class AssetPreview
 {
@@ -61,11 +62,13 @@ public static class AssetPreview
 
             var images = EncodeTextures(exports.OfType<UTexture>(), platform, ct, out var imageWarnings);
             var (sounds, warnings) = Sounds(a => a.FromExports(file, exports));
+            var world = exports.OfType<UWorld>().FirstOrDefault();
             return new PreviewResult(Truncate(json), "Json", images,
                 exports.FirstOrDefault(ViewerModel.CanView),
                 exports.OfType<UAnimationAsset>().FirstOrDefault(a => a is UAnimSequence or UAnimMontage or UAnimComposite or UBlendSpaceBase),
-                exports.OfType<UWorld>().FirstOrDefault(), sounds, warnings, exports.OfType<USkeleton>().FirstOrDefault(),
-                imageWarnings, exports.OfType<UMaterialInterface>().FirstOrDefault());
+                world, sounds, warnings, exports.OfType<USkeleton>().FirstOrDefault(),
+                imageWarnings, exports.OfType<UMaterialInterface>().FirstOrDefault(),
+                world is null ? NavMesh.FromExports(exports) : null); // a map's navmeshes come with the map
         }
 
         if (audio is not null && SoundExtractor.AudioExtensions.Contains(file.Extension))
@@ -81,6 +84,20 @@ public static class AssetPreview
 
         if (ImageExtensions.Contains(file.Extension))
             return new PreviewResult("", null, [new PreviewImage(file.NameWithoutExtension, bytes)]);
+
+        if (NavMesh.IsNavMeshSet(bytes))
+        {
+            try
+            {
+                var navMesh = NavMesh.TryRead(bytes, file.NameWithoutExtension)!;
+                return new PreviewResult(Truncate(JsonConvert.SerializeObject(navMesh.Summary(), Formatting.Indented)), "Json", null, NavMeshes: [navMesh]);
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                Serilog.Log.Warning(e, "Could not read the navmesh {Path}", file.Path);
+                return new PreviewResult(HexDump(bytes, 64 * 1024), null, null, Warning: $"{file.Name}: not a navmesh this viewer can read ({e.Message})");
+            }
+        }
 
         // FModel's "Decompile Lua": compiled chunks through unluac; source .lua files are shown as they are
         if (LuaDecompiler.IsChunk(bytes))

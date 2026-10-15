@@ -1408,6 +1408,25 @@ async Task ViewerTestAsync(string outputDir, string[] packages)
         }
 
         var watch = System.Diagnostics.Stopwatch.StartNew();
+        // Navigation mesh files (Detour navmesh sets): top view, then wireframe
+        if (!file.IsUePackage)
+        {
+            var preview = AssetPreview.Build(provider, file, default);
+            if (preview.Warning is { } previewWarning) Console.WriteLine($"{file.Name}: {previewWarning}");
+            foreach (var navMesh in preview.NavMeshes ?? [])
+            {
+                var navModel = await Task.Run(() => ViewerModel.FromNavMesh(navMesh));
+                viewer.AddModel(navModel);
+                Console.WriteLine($"{navMesh.Name}: {navMesh.Tiles.Length} tiles, {navMesh.PolyCount} polygons, {navModel.TriangleCount} triangles, " +
+                                  $"{(navModel.Max - navModel.Min) / 100} m, sections {string.Join(", ", navModel.Sections.Select(x => $"{x.MaterialName} ({x.IndexCount / 3})"))}, " +
+                                  $"built in {watch.ElapsedMilliseconds} ms");
+                await Capture($"navmesh-{navMesh.Name}");
+                viewer.ModelViewport.Wireframe = true;
+                await Capture($"navmesh-{navMesh.Name}-wireframe");
+                viewer.ModelViewport.Wireframe = false;
+            }
+            continue;
+        }
         var exports = AssetPreview.LoadExports(provider, file);
         if (exports.OfType<UAnimationAsset>().FirstOrDefault(a => a is UAnimSequence or UAnimMontage or UAnimComposite or UBlendSpaceBase) is { } asset)
         {
@@ -1462,7 +1481,8 @@ async Task ViewerTestAsync(string outputDir, string[] packages)
 
         if (exports.OfType<CUE4Parse.UE4.Objects.Engine.UWorld>().FirstOrDefault() is { } world)
         {
-            var items = await Task.Run(() => MapLoader.Load(world, new Progress<string>(m => { if (m.StartsWith("Reading")) Console.WriteLine($"    {m}"); })));
+            var items = await Task.Run(() => MapLoader.Load(world, new Progress<string>(m => { if (m.StartsWith("Reading")) Console.WriteLine($"    {m}"); }),
+                includeNavMeshes: true));
             viewer.ShowMap(items);
             var map = items[0];
             foreach (var extra in items.Skip(1))
@@ -1472,6 +1492,13 @@ async Task ViewerTestAsync(string outputDir, string[] packages)
             foreach (var o in map.Objects.OrderByDescending(o => o.Instances.Length).Take(5))
                 Console.WriteLine($"    {o.Model.Name} ({o.Model.Kind}) × {o.Instances.Length}");
             await Capture($"map-{map.Name}");
+            foreach (var nav in items.Where(i => i.Kind == ViewerModel.NavMeshKind))
+            {
+                nav.IsVisible = true;
+                viewer.ModelViewport.FrameBox(nav.Min, nav.Max, 0.6f);
+                await Capture($"map-{map.Name}-{nav.Name.Split(" · ")[^1]}");
+                nav.IsVisible = false;
+            }
 
             // Which packed masks the materials got, and how they're read
             foreach (var group in map.Objects.SelectMany(o => o.Model.Sections).Where(x => x.MaskTexture is not null)
