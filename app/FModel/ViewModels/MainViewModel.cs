@@ -1384,8 +1384,10 @@ public sealed partial class MainViewModel : ObservableObject, IAnimationSource
         SetStatus(StatusKind.Loading, $"Queueing {what}");
         try
         {
-            // Packages are read in parallel; one that can't be read is skipped (FModel's BulkFolder ignores them)
-            var found = new System.Collections.Concurrent.ConcurrentBag<(int Index, UObject[] Exports)>();
+            // Packages are read in parallel, only their export maps: the session loads the assets a batch at a time
+            // when it runs. One that can't be read is skipped (FModel's BulkFolder ignores them)
+            var finder = new ExportFinder(provider, filter);
+            var found = new System.Collections.Concurrent.ConcurrentBag<(int Index, ExportSource[] Exports)>();
             var unreadable = new System.Collections.Concurrent.ConcurrentBag<string>();
             var done = 0;
             await Task.Run(() => Parallel.For(0, files.Length,
@@ -1393,7 +1395,7 @@ public sealed partial class MainViewModel : ObservableObject, IAnimationSource
                 {
                     try
                     {
-                        var matching = AssetPreview.LoadExports(provider, files[i]).Where(filter).ToArray();
+                        var matching = finder.Find(files[i]);
                         if (matching.Length > 0) found.Add((i, matching));
                     }
                     catch (Exception e)
