@@ -24,7 +24,8 @@ layout and features as closely as macOS allows.
 - **Previews:** properties as JSON, textures, decompiled Blueprints and Lua, localized texts, an
   audio player (Wwise, Bink, ADX/HCA, Opus… through vgmstream) and an image merger.
 - **3D viewer** (OpenGL): static and skeletal meshes with PBR materials and normal maps, maps and
-  landscapes with their layers, an orbit and a fly camera, animations, blend spaces and morph
+  landscapes with their layers, navigation meshes (UE's cooked navmesh data and Detour navmesh set
+  `.bin` files, by area, over the map when one is open), an orbit and a fly camera, animations, blend spaces and morph
   targets, the animations made for a mesh's skeleton with their notifies (sounds played in sync, an
   approximate preview of Niagara and Cascade effects), screenshots and **video export** (MP4/MOV with
   the notify sounds).
@@ -103,6 +104,10 @@ fmodel search Hero_Body                          # find files in the active prof
 fmodel cat /Game/Characters/Hero/Hero            # a package's properties, as FModel's JSON
 fmodel export /Game/Characters/Hero --kind models -p "My Game"   # glTF into ~/Documents/FModel/Output/Exports
 fmodel ls -d ~/Games/MyGame/Content/Paks -g GAME_UE5_4 -k 0x… Game/Content     # a game without a profile
+fmodel export Game/Content --kind all           # every kind but raw data, for a whole folder
+fmodel backup                                    # the game's file list, as a .fbkp in Output/Backups
+fmodel diff latest                               # what's new or modified since the newest backup
+fmodel export --since latest --kind textures     # only the new or modified files (no path = the whole game)
 ```
 
 `fmodel help` lists every command and option. The command line reads the app's profiles and settings
@@ -133,8 +138,9 @@ Claude Desktop and other clients (`claude_desktop_config.json` or the client's e
 }
 ```
 
-Every tool reads the game except `export_assets`, which writes into the app's output folder (or the folder you
-give it).
+Every tool only reads the game except `export_assets`, which writes into the app's output folder (or the folder
+you give it), and `create_backup`, which saves the game's file list as a `.fbkp`. `compare_backup` and
+`export_assets` with `since` tell or export what changed since a backup.
 
 ## Where it keeps things
 

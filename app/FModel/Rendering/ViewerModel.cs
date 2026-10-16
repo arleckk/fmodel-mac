@@ -225,7 +225,7 @@ public readonly record struct MaskLayout(int Roughness, int Metallic, int Occlus
 /// CPU side of a mesh for the viewer: LOD 0 converted to a Y-up right-handed space
 /// (UE is Z-up left-handed, so Y and Z are swapped), plus one diffuse texture per section.
 /// </summary>
-public sealed class ViewerModel
+public sealed partial class ViewerModel
 {
     public const int FloatsPerVertex = 12; // position, normal, uv, tangent (xyz + binormal sign)
     public const int FloatsPerSkin = 8;   // 4 bone indices, 4 weights

@@ -312,50 +312,108 @@ public sealed class FModelMcpServer
     // ---------- Exporting ----------
 
     [McpServerTool(Name = "export_assets", Title = "Export assets", ReadOnly = false, Destructive = false, OpenWorld = false)]
-    [Description("Exports files or whole folders to disk with the FModel app's export settings (glTF/UEFormat models, PNG textures, WAV sounds…), into its output folder (~/Documents/FModel/Output/Exports by default, keeping the game's folder structure). Returns the files written.")]
+    [Description("Exports files or whole folders to disk with the FModel app's export settings (glTF/UEFormat models, PNG textures, WAV sounds…), into its output folder (~/Documents/FModel/Output/Exports by default, keeping the game's folder structure). With 'since', only what is new or modified since a backup. Returns the files written.")]
     public async Task<string> ExportAssets(
-        [Description("Game paths or package paths of files or folders.")] string[] paths,
-        [Description("What to export: properties (JSON), raw (the package files as they are), textures, models, animations, worlds, audio or code (decompiled Blueprints).")] string kind,
+        [Description("Game paths or package paths of files or folders. Empty with 'since': the whole game.")] string[] paths,
+        [Description("What to export: properties (JSON), raw (the package files as they are), textures, models, animations, worlds, audio or code (decompiled Blueprints); several separated by commas, or all (every kind but raw).")] string kind,
         [Description("Folder to write to, instead of the app's output folder.")] string? output_directory = null,
+        [Description("Only files new or modified since this backup: a .fbkp path, or latest for the newest one in Output/Backups.")] string? since = null,
+        [Description("Mesh format for this export only: gltf, uemodel, usd or actorx (default: the app's setting).")] string? mesh_format = null,
         CancellationToken ct = default)
     {
         var game = await GameAsync(ct);
-        var exportKind = Wrap(() => HeadlessExport.ParseKind(kind));
+        var kinds = Wrap(() => HeadlessChanges.ParseKinds(kind));
         var files = new List<GameFile>();
+        if (paths.Length == 0 && since is null) throw new McpException("Nothing to export: give paths, or 'since' for the whole game");
+        if (paths.Length == 0) files.AddRange(game.FilesUnder(""));
         foreach (var path in paths)
         {
             if (game.FindFolder(path) is { } folder) files.AddRange(game.FilesUnder(folder));
             else files.Add(Resolve(game, path));
         }
-        if (files.Count == 0) throw new McpException("Nothing to export: the folders are empty");
+        IReadOnlyList<GameFile> selected = files.DistinctBy(f => f.Path).ToArray();
+        string? changesNote = null;
+        if (since is not null)
+        {
+            var changes = await Task.Run(() => Wrap(() => HeadlessChanges.Compare(game, HeadlessChanges.ResolveBackup(game.Settings, since))), ct);
+            selected = HeadlessChanges.OnlyChanged(selected, changes);
+            changesNote = $"Since {Path.GetFileName(changes.Backup)}: {changes.New.Count:N0} new and {changes.Modified.Count:N0} modified in the game, {selected.Count:N0} of them in the paths";
+        }
+        if (selected.Count == 0) return changesNote is null ? "Nothing to export: the folders are empty" : $"{changesNote}. Nothing to export.";
 
-        // One export at a time: the output folder is a setting, and the Export Session's logs aren't per run
+        // One export at a time: the output folder and the mesh format are settings, and the Export Session's logs
+        // aren't per run
         var settings = game.Settings;
         await _exportGate.WaitAsync(ct);
-        var outputDir = settings.OutputDir;
-        ExportReport report;
+        var (outputDir, meshFormat, compression) = (settings.OutputDir, settings.MeshExportFormat, settings.CompressionFormat);
+        var written = new List<string>();
+        var errors = new List<string>();
+        var directory = settings.ExportsDir;
+        var empty = 0;
         try
         {
             if (!string.IsNullOrWhiteSpace(output_directory)) settings.OutputDir = Path.GetFullPath(Environment.ExpandEnvironmentVariables(output_directory));
-            report = await HeadlessExport.RunAsync(game, files.DistinctBy(f => f.Path).ToArray(), exportKind, null, ct);
+            Wrap(() =>
+            {
+                HeadlessChanges.Override(settings, mesh_format, null);
+                return 0;
+            });
+            foreach (var exportKind in kinds)
+            {
+                var report = await HeadlessExport.RunAsync(game, selected, exportKind, null, ct);
+                directory = report.Directory;
+                written.AddRange(report.Files);
+                errors.AddRange(report.Errors);
+                empty += report.Empty;
+            }
         }
         finally
         {
-            settings.OutputDir = outputDir;
+            (settings.OutputDir, settings.MeshExportFormat, settings.CompressionFormat) = (outputDir, meshFormat, compression);
             _exportGate.Release();
         }
 
-        var text = new StringBuilder($"Exported {report.Files.Count} file(s) to {report.Directory}");
-        if (report.Empty > 0) text.Append($"; {report.Empty} file(s) had no {kind}");
+        var text = new StringBuilder();
+        if (changesNote is not null) text.AppendLine(changesNote);
+        text.Append($"Exported {written.Count} file(s) to {directory}");
+        if (empty > 0) text.Append($"; {empty} file(s) had nothing of the kind");
         text.AppendLine();
-        foreach (var file in report.Files.Take(200)) text.AppendLine(file);
-        if (report.Files.Count > 200) text.AppendLine($"… and {report.Files.Count - 200} more");
-        if (report.Errors.Count > 0)
+        foreach (var file in written.Take(200)) text.AppendLine(file);
+        if (written.Count > 200) text.AppendLine($"… and {written.Count - 200} more");
+        if (errors.Count > 0)
         {
-            text.AppendLine($"{report.Errors.Count} error(s):");
-            foreach (var error in report.Errors.Take(20)) text.AppendLine(error);
+            text.AppendLine($"{errors.Count} error(s):");
+            foreach (var error in errors.Take(20)) text.AppendLine(error);
         }
         return text.ToString().TrimEnd();
+    }
+
+    // ---------- Backups ----------
+
+    [McpServerTool(Name = "create_backup", Title = "Back up the game's file list", ReadOnly = false, Destructive = false, OpenWorld = false)]
+    [Description("FModel's Directory › Backup › Create: saves the path and size of every file of the mounted game as a .fbkp in Output/Backups (or the given folder or .fbkp file), to compare later releases with compare_backup or export_assets' 'since'.")]
+    public async Task<string> CreateBackup(
+        [Description("A folder or a .fbkp file to write, instead of Output/Backups.")] string? output = null,
+        CancellationToken ct = default)
+    {
+        var game = await GameAsync(ct);
+        var (path, count) = await Task.Run(() => Wrap(() => HeadlessChanges.CreateBackup(game, output)), ct);
+        return $"Backup of {count:N0} files saved to {path}";
+    }
+
+    [McpServerTool(Name = "compare_backup", Title = "What changed since a backup", ReadOnly = true, Idempotent = true, OpenWorld = false)]
+    [Description("FModel's All (New) / All (Modified): the files of the mounted game that are new, or whose size changed, since a backup, plus how many of the backup's files are gone.")]
+    public async Task<string> CompareBackup(
+        [Description("A .fbkp path, or latest for the newest one in Output/Backups.")] string backup = "latest",
+        [Description("Lines to skip, to page through long lists.")] int offset = 0,
+        [Description("At most this many paths (default 500).")] int limit = 500,
+        CancellationToken ct = default)
+    {
+        var game = await GameAsync(ct);
+        var changes = await Task.Run(() => Wrap(() => HeadlessChanges.Compare(game, HeadlessChanges.ResolveBackup(game.Settings, backup))), ct);
+        var lines = changes.New.Select(p => $"+ {p}").Concat(changes.Modified.Select(p => $"~ {p}")).ToArray();
+        return PageLines(lines, offset, limit,
+            $"Since {Path.GetFileName(changes.Backup)} ({changes.BackupFiles:N0} files): {changes.New.Count:N0} new (+), {changes.Modified.Count:N0} modified (~), {changes.Removed:N0} removed");
     }
 
     // ---------- Helpers ----------

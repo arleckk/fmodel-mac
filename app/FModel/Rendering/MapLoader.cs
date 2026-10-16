@@ -38,7 +38,9 @@ public static class MapLoader
     private sealed record CellRef(FPackageIndex Cell, string Partition, bool IsHlod, DataLayerTable DataLayers);
 
     /// <param name="context">Texture size and platform; maps keep textures small (512) whatever the setting allows.</param>
-    public static SceneItem[] Load(UWorld world, IProgress<string>? progress = null, CancellationToken ct = default, ViewerLoadContext? context = null)
+    /// <param name="includeNavMeshes">Add the levels' navigation meshes, hidden, one item per navigation data (agent).</param>
+    public static SceneItem[] Load(UWorld world, IProgress<string>? progress = null, CancellationToken ct = default, ViewerLoadContext? context = null,
+        bool includeNavMeshes = false)
     {
         var builders = new ConcurrentDictionary<string, Func<ViewerLoadContext, ViewerModel>>(StringComparer.OrdinalIgnoreCase);
         var visitedWorlds = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
@@ -46,6 +48,7 @@ public static class MapLoader
         var main = layers[""] = new Layer(world.Name, SceneItem.MapKind, true, 0);
         var pendingCells = new ConcurrentQueue<CellRef>();
         var failedCells = 0;
+        var navMeshes = new ConcurrentBag<(NavMesh NavMesh, Matrix4x4 Transform)>();
 
         void Place(Layer layer, string key, Func<ViewerLoadContext, ViewerModel> build, Matrix4x4 transform)
         {
@@ -64,6 +67,17 @@ public static class MapLoader
             using (var dto = new WorldDto(w, expandWorldPartition: false, ct))
             {
                 foreach (var actor in dto.Actors) VisitActor(actor, parent, layer);
+            }
+            if (includeNavMeshes && w.PersistentLevel.TryLoad<ULevel>(out var level))
+            {
+                try
+                {
+                    foreach (var navMesh in NavMesh.FromLevel(level)) navMeshes.Add((navMesh, parent));
+                }
+                catch (Exception e) when (e is not OperationCanceledException)
+                {
+                    Serilog.Log.Warning(e, "Skipping the navigation data of {Level}", w.GetPathName());
+                }
             }
 
             // Sub-levels, with their level transform (WorldDto drops it). World Partition's own streaming objects are
@@ -249,12 +263,35 @@ public static class MapLoader
                 IsVisible = false
             }.WithBounds());
 
+        // Hidden, like the editor's (P): a level's chunks of the same agent become one model
+        foreach (var group in navMeshes.GroupBy(n => (n.NavMesh.Name, n.Transform)).OrderBy(g => g.Key.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var merged = new NavMesh { Name = $"{world.Name} · {group.Key.Name}", Tiles = group.SelectMany(n => n.NavMesh.Tiles).ToArray() };
+                var model = ViewerModel.FromNavMesh(merged);
+                items.Add(new SceneItem
+                {
+                    Name = merged.Name,
+                    Kind = model.Kind,
+                    Details = $"{model.Kind} · {merged.Tiles.Length:N0} tiles · {merged.PolyCount:N0} polygons",
+                    Objects = [new SceneObject(model, [group.Key.Transform])],
+                    IsVisible = false
+                }.WithBounds());
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                Serilog.Log.Warning(e, "Skipping the navigation mesh {NavMesh} of {Map}", group.Key.Name, world.Name);
+            }
+        }
+
         if (items.Count == 0)
             throw new InvalidOperationException($"{world.Name} has no meshes the viewer can show" +
                                                 (failedCells > 0 ? $" ({failedCells} World Partition cells couldn't be read)" : ""));
-        // Something must be on screen: if only hidden layers have content, show them
+        // Something must be on screen: if only hidden layers have content, show them (of navmeshes, which overlap, the first)
         if (!items.Any(i => i.IsVisible))
-            foreach (var item in items) item.IsVisible = true;
+            foreach (var item in items.Where(i => i.Kind != ViewerModel.NavMeshKind)) item.IsVisible = true;
+        if (!items.Any(i => i.IsVisible)) items[0].IsVisible = true;
         return items.ToArray();
     }
 

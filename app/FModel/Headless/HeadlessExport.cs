@@ -74,8 +74,7 @@ public static class HeadlessExport
                     ExportKind.Animations => e => e is UAnimationAsset,
                     _ => e => e is UWorld
                 };
-                var exports = ReadExports(game, files, filter, errors, ct);
-                return session.Enqueue(exports, game.Archive.Provider);
+                return session.Enqueue(FindExports(game, files, filter, errors, ct), game.Archive.Provider);
             }, log, ct)
         };
     }
@@ -148,17 +147,19 @@ public static class HeadlessExport
         return new ExportReport(game.Settings.ExportsDir, written, errors, empty);
     }
 
-    // The exports of each package that pass the filter, read in parallel; unreadable packages are reported and skipped
-    private static UObject[] ReadExports(HeadlessGame game, IReadOnlyList<GameFile> files, Func<UObject, bool> filter,
+    // The exports of each package that pass the filter, found in parallel from the export maps (the session loads
+    // them a batch at a time); unreadable packages are reported and skipped
+    private static ExportSource[] FindExports(HeadlessGame game, IReadOnlyList<GameFile> files, Func<UObject, bool> filter,
         ConcurrentQueue<string> errors, CancellationToken ct)
     {
         var packages = files.Where(f => f.IsUePackage).ToArray();
-        var found = new ConcurrentBag<(int Index, UObject[] Exports)>();
+        var finder = new ExportFinder(game.Archive.Provider, filter);
+        var found = new ConcurrentBag<(int Index, ExportSource[] Exports)>();
         Parallel.For(0, packages.Length, new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount / 2), CancellationToken = ct }, i =>
         {
             try
             {
-                var matching = AssetPreview.LoadExports(game.Archive.Provider, packages[i], ct).Where(filter).ToArray();
+                var matching = finder.Find(packages[i]);
                 if (matching.Length > 0) found.Add((i, matching));
             }
             catch (Exception e) when (e is not OperationCanceledException)
@@ -185,6 +186,7 @@ public static class HeadlessExport
         ct.ThrowIfCancellationRequested();
         foreach (var item in session.Groups.SelectMany(g => g.Items).Where(i => i.State == ExportItemState.Failed))
             errors.Enqueue($"{item.ObjectPath}: {item.Error}");
-        return new ExportReport(summary.Directory, summary.Files.Distinct(StringComparer.Ordinal).ToArray(), errors.ToArray(), 0);
+        // Sorted like the other kinds: the session lists files in the order its exporters finished
+        return new ExportReport(summary.Directory, summary.Files.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(), errors.ToArray(), 0);
     }
 }
